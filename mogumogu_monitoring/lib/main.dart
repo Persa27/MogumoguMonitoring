@@ -12,14 +12,10 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'cast_controller.dart';
-import 'privacy_compliance.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final cameras = await availableCameras();
-  
-  // COPPA/GDPR準拠: 古いデータの自動削除チェック
-  await PrivacyComplianceManager.checkAndDeleteExpiredData();
   
   runApp(MogumoguApp(cameras: cameras));
 }
@@ -37,120 +33,8 @@ class MogumoguApp extends StatelessWidget {
         primarySwatch: Colors.blue,
         useMaterial3: true,
       ),
-      home: PrivacyCheckWrapper(cameras: cameras),
+      home: HomeScreen(cameras: cameras),
     );
-  }
-}
-
-/// COPPA/GDPR準拠のためのプライバシーチェックラッパー
-class PrivacyCheckWrapper extends StatefulWidget {
-  final List<CameraDescription> cameras;
-
-  const PrivacyCheckWrapper({super.key, required this.cameras});
-
-  @override
-  State<PrivacyCheckWrapper> createState() => _PrivacyCheckWrapperState();
-}
-
-class _PrivacyCheckWrapperState extends State<PrivacyCheckWrapper> {
-  bool _isChecking = true;
-  bool _hasConsent = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _checkPrivacyCompliance();
-  }
-
-  Future<void> _checkPrivacyCompliance() async {
-    final hasConsent = await PrivacyComplianceManager.hasParentalConsent();
-    setState(() {
-      _hasConsent = hasConsent;
-      _isChecking = false;
-    });
-
-    if (!hasConsent) {
-      _showPrivacyFlow();
-    }
-  }
-
-  Future<void> _showPrivacyFlow() async {
-    // 年齢確認
-    final age = await showDialog<int>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const AgeVerificationDialog(),
-    );
-
-    if (age == null) {
-      // キャンセルされた場合はアプリを終了
-      SystemNavigator.pop();
-      return;
-    }
-
-    if (age < 13) {
-      // 13歳未満の場合は保護者の同意が必要
-      final consent = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => ParentalConsentDialog(childAge: age),
-      );
-
-      if (consent != true) {
-        // 同意が得られない場合はアプリを終了
-        SystemNavigator.pop();
-        return;
-      }
-    } else {
-      // 13歳以上の場合はプライバシーポリシーの同意のみ
-      await PrivacyComplianceManager.recordParentalConsent(
-        childAge: age,
-        parentEmail: 'self-consent@app.local',
-        consent: true,
-      );
-    }
-
-    setState(() {
-      _hasConsent = true;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_isChecking) {
-      return const Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(),
-        ),
-      );
-    }
-
-    if (!_hasConsent) {
-      return Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.privacy_tip, size: 64, color: Colors.orange),
-              const SizedBox(height: 16),
-              const Text(
-                'プライバシー設定が必要です',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              const Text('アプリを使用するには保護者の同意が必要です。'),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: _showPrivacyFlow,
-                child: const Text('設定を開始'),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return HomeScreen(cameras: widget.cameras);
   }
 }
 
@@ -509,7 +393,6 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
   String _customAudioPath = ''; // カスタム音声ファイルのパス
   bool _useBackCamera = true; // バックカメラを使用するか
   bool _isSettingsOpen = false; // 設定モーダルが開いているかどうか
-  bool _showEatingTimer = true; // 連続食事時間表示のON/OFF
   
   // 警告アクション設定
   String _warningAction = 'audio'; // 'audio' または 'youtube_cast'
@@ -521,10 +404,9 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
   DateTime? _lastFaceDetectionTime; // 最後に顔が検知された時間
   bool _isPlayingNoFaceAudio = false; // 顔検知なし音声再生中フラグ
   
-  // 連続食事時間のランキング（上位3位まで保存）
-  List<int> _eatingDurationRanking = [0, 0, 0];
+  // セッション開始時間
   DateTime? _sessionStartTime;
-
+  
   @override
   void initState() {
     super.initState();
@@ -612,17 +494,10 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
       _audioFile = prefs.getString('audio_file') ?? 'bell';  // デフォルトをbellに変更
       _customAudioPath = prefs.getString('custom_audio_path') ?? '';
       _useBackCamera = prefs.getBool('use_back_camera') ?? true;
-      _showEatingTimer = prefs.getBool('show_eating_timer') ?? true;
       // AudioModeScreenでは設定に関係なく音声再生モードに固定
       _warningAction = 'audio';
       _enableYouTubeCast = false;
-      _alertOnNoFaceDetected = prefs.getBool('alert_on_no_face_detected') ?? false;
-      
-      // ランキングデータの読み込み
-      final rankingData = prefs.getStringList('eating_duration_ranking');
-      if (rankingData != null && rankingData.length == 3) {
-        _eatingDurationRanking = rankingData.map((e) => int.parse(e)).toList();
-      }
+      _alertOnNoFaceDetected = prefs.getBool('alert_on_no_face_detected') ?? false;      
     });
     debugPrint('🎵 AudioModeScreen settings loaded - Warning action: $_warningAction, YouTube enabled: $_enableYouTubeCast');
   }
@@ -637,25 +512,8 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
     await prefs.setString('audio_file', _audioFile);
     await prefs.setString('custom_audio_path', _customAudioPath);
     await prefs.setBool('use_back_camera', _useBackCamera);
-    await prefs.setBool('show_eating_timer', _showEatingTimer);
     // warning_actionとenable_youtube_castは画面固有なので保存しない
     await prefs.setBool('alert_on_no_face_detected', _alertOnNoFaceDetected);
-    
-    // ランキングデータの保存
-    await prefs.setStringList('eating_duration_ranking', 
-        _eatingDurationRanking.map((e) => e.toString()).toList());
-  }
-  
-  // 連続食事時間をランキングに追加
-  void _updateEatingDurationRanking(int duration) {
-    if (duration > 0) {
-      _eatingDurationRanking.add(duration);
-      _eatingDurationRanking.sort((a, b) => b.compareTo(a)); // 降順ソート
-      if (_eatingDurationRanking.length > 3) {
-        _eatingDurationRanking = _eatingDurationRanking.take(3).toList();
-      }
-      _saveSettings(); // ランキング更新時に保存
-    }
   }
   
   // 時間を分秒形式でフォーマット
@@ -690,7 +548,7 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
       
       _cameraController = CameraController(
         camera,
-        ResolutionPreset.medium,
+        ResolutionPreset.high,
         enableAudio: false,
       );
       
@@ -709,17 +567,22 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
 
   Future<void> _initializeFaceDetector() async {
     try {
+      debugPrint('AudioMode: Initializing FaceDetector...');
       _faceDetector = FaceDetector(
         options: FaceDetectorOptions(
           enableContours: true,
           enableLandmarks: true,
+          enableClassification: false,
+          enableTracking: false,
+          minFaceSize: 0.05,
+          performanceMode: FaceDetectorMode.accurate,
         ),
       );
-      debugPrint('Face detector created successfully');
+      debugPrint('AudioMode: Face detector created successfully');
     } catch (e) {
-      debugPrint('Face detector initialization error: $e');
+      debugPrint('AudioMode: Face detector initialization error: $e');
       // 顔検出の初期化に失敗してもアプリを続行
-      debugPrint('Continuing without face detection');
+      debugPrint('AudioMode: Continuing without face detection');
     }
   }
 
@@ -746,7 +609,10 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
   }
 
   Future<void> _detectFaces(CameraImage image) async {
-    if (_faceDetector == null) return;
+    if (_faceDetector == null) {
+      debugPrint('FaceDetector is null - skipping detection');
+      return;
+    }
     
     try {
       final inputImage = _inputImageFromCameraImage(image);
@@ -755,6 +621,8 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
         return;
       }
 
+      debugPrint('Processing image with FaceDetector...');
+      debugPrint('InputImage metadata: ${inputImage.metadata}');
       final faces = await _faceDetector!.processImage(inputImage);
       debugPrint('Detected ${faces.length} faces');
       
@@ -897,11 +765,6 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
     final removedFaceIds = _faceStates.keys.where((id) => !currentFaceIds.contains(id)).toList();
     for (final faceId in removedFaceIds) {
       final faceState = _faceStates[faceId]!;
-      // 連続食事時間をランキングに追加
-      if (faceState.currentEatingStartTime != null && faceState.isEating) {
-        final duration = DateTime.now().difference(faceState.currentEatingStartTime!).inSeconds;
-        _updateEatingDurationRanking(duration);
-      }
       faceState.dispose();
       _faceStates.remove(faceId);
     }
@@ -970,12 +833,6 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
     // 1秒経過で「食べていません」表示に変更（静止中は食べていない扱い）
     if (timeSinceLastMovement.inSeconds >= 1) {
       if (faceState.isEating) {
-        // 連続食事時間をランキングに追加
-        if (faceState.currentEatingStartTime != null) {
-          final duration = DateTime.now().difference(faceState.currentEatingStartTime!).inSeconds;
-          _updateEatingDurationRanking(duration);
-        }
-        
         setState(() {
           faceState.isEating = false;
           faceState.showNotEatingMessage = true;
@@ -1405,20 +1262,6 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
                     ),
 
                     const Divider(),
-                    // 連続食事時間表示のON/OFF設定
-                    ListTile(
-                      title: const Text('連続食事時間表示'),
-                      subtitle: const Text('カメラ映像上にリアルタイムタイマーを表示'),
-                      trailing: Switch(
-                        value: _showEatingTimer,
-                        onChanged: (value) {
-                          setDialogState(() {
-                            _showEatingTimer = value;
-                          });
-                        },
-                      ),
-                    ),
-                    const Divider(),
                     // YouTube Cast制御の有効/無効設定
                     ListTile(
                       title: const Text('YouTube Cast制御'),
@@ -1591,26 +1434,11 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
                     ],
                     const Divider(),
                     ListTile(
-                      title: const Text('保護者向け設定'),
-                      subtitle: const Text('プライバシー設定とデータ管理'),
-                      trailing: const Icon(Icons.family_restroom),
-                      onTap: () {
-                        Navigator.of(context).pop(); // 設定ダイアログを閉じる
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (context) => const ParentalControlsScreen(),
-                          ),
-                        );
-                      },
-                    ),
-                    const Divider(),
-                    ListTile(
                       title: const Text('ランキングをリセット'),
                       subtitle: const Text('連続食事時間のランキングをリセットします'),
                       trailing: ElevatedButton(
                         onPressed: () {
                           setDialogState(() {
-                            _eatingDurationRanking = [0, 0, 0];
                             _sessionStartTime = DateTime.now();
                           });
                         },
@@ -1780,179 +1608,6 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
     }
   }
 
-  // 連続食事時間表示オーバーレイ
-  Widget _buildEatingTimerOverlay() {
-    // 設定でOFFになっている場合は表示しない
-    if (!_showEatingTimer) return const SizedBox.shrink();
-    
-    // 食事中の顔があるかチェック
-    final eatingFaces = _faceStates.values.where((state) => state.isEating).toList();
-    if (eatingFaces.isEmpty) return const SizedBox.shrink();
-    
-    // 最も長く食べている時間を取得
-    final maxDuration = eatingFaces.map((state) => state.getCurrentEatingDuration()).reduce((a, b) => a > b ? a : b);
-    if (maxDuration == 0) return const SizedBox.shrink();
-    
-    return Positioned(
-      top: 20,
-      left: 0,
-      right: 0,
-      child: Center(
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 500),
-          curve: Curves.elasticOut,
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: _getTimerColors(maxDuration),
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(30),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.3),
-                blurRadius: 15,
-                offset: const Offset(0, 5),
-              ),
-              BoxShadow(
-                color: const Color(0xFFFFD700).withOpacity(0.5),
-                blurRadius: 20,
-                offset: const Offset(0, 0),
-              ),
-            ],
-            border: Border.all(
-              color: Colors.white.withOpacity(0.8),
-              width: 3,
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // キラキラエフェクト付きのタイトル
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _buildSparkleText('✨'),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'がんばってるね！',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      shadows: [
-                        Shadow(
-                          color: Colors.black54,
-                          offset: Offset(1, 1),
-                          blurRadius: 2,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  _buildSparkleText('✨'),
-                ],
-              ),
-              const SizedBox(height: 8),
-              // 大きな時間表示
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: const Color(0xFFFFD700),
-                    width: 2,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _buildBouncingEmoji('🍽️'),
-                    const SizedBox(width: 12),
-                    Text(
-                      _formatDurationForTimer(maxDuration),
-                      style: TextStyle(
-                        color: const Color(0xFFFF6B35),
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        fontFamily: 'monospace',
-                        shadows: [
-                          Shadow(
-                            color: Colors.black26,
-                            offset: const Offset(1, 1),
-                            blurRadius: 1,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    _buildBouncingEmoji('🎉'),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 4),
-              // 励ましメッセージ
-              Text(
-                _getEncouragementMessage(maxDuration),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  shadows: [
-                    Shadow(
-                      color: Colors.black54,
-                      offset: Offset(1, 1),
-                      blurRadius: 2,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-  
-  // キラキラエフェクト付きテキスト
-  Widget _buildSparkleText(String text) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 1000),
-      child: Text(
-        text,
-        style: const TextStyle(
-          fontSize: 20,
-          shadows: [
-            Shadow(
-              color: Colors.white,
-              offset: Offset(0, 0),
-              blurRadius: 10,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-  
-  // バウンスする絵文字
-  Widget _buildBouncingEmoji(String emoji) {
-    return TweenAnimationBuilder<double>(
-      duration: const Duration(milliseconds: 1000),
-      tween: Tween(begin: 0.0, end: 1.0),
-      builder: (context, value, child) {
-        return Transform.scale(
-          scale: 1.0 + (math.sin(value * math.pi * 4) * 0.1),
-          child: Text(
-            emoji,
-            style: const TextStyle(fontSize: 24),
-          ),
-        );
-      },
-    );
-  }
-  
   // タイマー用の時間フォーマット
   String _formatDurationForTimer(int seconds) {
     final minutes = seconds ~/ 60;
@@ -1960,120 +1615,6 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
     return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
   }
   
-  // 励ましメッセージ
-  String _getEncouragementMessage(int seconds) {
-    if (seconds < 10) return 'いいかんじ！';
-    if (seconds < 30) return 'すごいね！';
-    if (seconds < 60) return 'がんばってる！';
-    if (seconds < 120) return 'すばらしい！';
-    if (seconds < 300) return 'ちょうすごい！';
-    return 'きみはチャンピオン！';
-  }
-  
-  // 時間に応じたタイマーの色
-  List<Color> _getTimerColors(int seconds) {
-    if (seconds < 10) {
-      return [
-        const Color(0xFF4CAF50).withOpacity(0.95), // 緑
-        const Color(0xFF8BC34A).withOpacity(0.95),
-      ];
-    } else if (seconds < 30) {
-      return [
-        const Color(0xFF2196F3).withOpacity(0.95), // 青
-        const Color(0xFF03A9F4).withOpacity(0.95),
-      ];
-    } else if (seconds < 60) {
-      return [
-        const Color(0xFFFF9800).withOpacity(0.95), // オレンジ
-        const Color(0xFFFFC107).withOpacity(0.95),
-      ];
-    } else if (seconds < 120) {
-      return [
-        const Color(0xFFE91E63).withOpacity(0.95), // ピンク
-        const Color(0xFFFF5722).withOpacity(0.95),
-      ];
-    } else if (seconds < 300) {
-      return [
-        const Color(0xFF9C27B0).withOpacity(0.95), // 紫
-        const Color(0xFF673AB7).withOpacity(0.95),
-      ];
-    } else {
-      return [
-        const Color(0xFFFFD700).withOpacity(0.95), // ゴールド
-        const Color(0xFFFFA500).withOpacity(0.95),
-      ];
-    }
-  }
-  
-  // 特別な達成エフェクト
-  Widget _buildAchievementEffect(int seconds, BuildContext context) {
-    // 10秒、30秒、60秒、120秒、300秒の節目で特別エフェクト
-    final milestones = [10, 30, 60, 120, 300];
-    final isSpecialMoment = milestones.contains(seconds);
-    
-    if (!isSpecialMoment) return const SizedBox.shrink();
-    
-    return Positioned.fill(
-      child: IgnorePointer(
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 2000),
-          child: Stack(
-            children: [
-              // 花火エフェクト
-              ...List.generate(8, (index) {
-                final angle = (index * math.pi * 2) / 8;
-                return Positioned(
-                  left: MediaQuery.of(context).size.width / 2 - 15,
-                  top: MediaQuery.of(context).size.height / 3,
-                  child: TweenAnimationBuilder<double>(
-                    duration: const Duration(milliseconds: 1500),
-                    tween: Tween(begin: 0.0, end: 1.0),
-                    builder: (context, value, child) {
-                      final distance = value * 100;
-                      final x = math.cos(angle) * distance;
-                      final y = math.sin(angle) * distance;
-                      return Transform.translate(
-                        offset: Offset(x, y),
-                        child: Opacity(
-                          opacity: 1.0 - value,
-                          child: const Text(
-                            '⭐',
-                            style: TextStyle(fontSize: 30),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                );
-              }),
-              // 中央の大きな星
-              Positioned(
-                left: MediaQuery.of(context).size.width / 2 - 25,
-                top: MediaQuery.of(context).size.height / 3 - 25,
-                child: TweenAnimationBuilder<double>(
-                  duration: const Duration(milliseconds: 1000),
-                  tween: Tween(begin: 0.0, end: 1.0),
-                  builder: (context, value, child) {
-                    return Transform.scale(
-                      scale: value * 2,
-                      child: Opacity(
-                        opacity: 1.0 - value,
-                        child: const Text(
-                          '🌟',
-                          style: TextStyle(fontSize: 50),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   // カメラプレビューとオーバーレイを統一したレイヤー
   Widget _buildCameraLayer(BuildContext context) {
     // プレビューが実際に占める縦横比 (回転後なので「高さ÷幅」)
@@ -2108,21 +1649,6 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
                       : CameraLensDirection.front,
                 ),
               ),
-              
-              // 連続食事時間表示
-              _buildEatingTimerOverlay(),
-              
-              // 達成エフェクト
-              if (_showEatingTimer && _faceStates.values.any((state) => state.isEating))
-                Builder(
-                  builder: (context) => _buildAchievementEffect(
-                    _faceStates.values
-                        .where((state) => state.isEating)
-                        .map((state) => state.getCurrentEatingDuration())
-                        .fold(0, (a, b) => a > b ? a : b),
-                    context,
-                  ),
-                ),
             ],
           );
         },
@@ -2404,7 +1930,7 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
             debugPrint('🏠 Navigating to home from AudioModeScreen');
             Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(builder: (context) => PrivacyCheckWrapper(cameras: widget.cameras)),
+              MaterialPageRoute(builder: (context) => HomeScreen(cameras: widget.cameras)),
               (route) => false, // 全ての前の画面を削除
             );
           },
@@ -2831,7 +2357,6 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
   String _customAudioPath = '';
   bool _useBackCamera = true;
   bool _isSettingsOpen = false;
-  bool _showEatingTimer = true;
   
   String _warningAction = 'youtube_cast';
   bool _enableYouTubeCast = true;
@@ -2842,9 +2367,9 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
   bool _isPlayingNoFaceAudio = false;
   bool _videoPausedByNoFace = false; // 顔検知なしで動画を停止したフラグ
   
-  List<int> _eatingDurationRanking = [0, 0, 0];
+  // セッション開始時間
   DateTime? _sessionStartTime;
-
+  
   @override
   void initState() {
     super.initState();
@@ -2905,16 +2430,11 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
       _audioFile = prefs.getString('audio_file') ?? 'bell';  // デフォルトをbellに変更
       _customAudioPath = prefs.getString('custom_audio_path') ?? '';
       _useBackCamera = prefs.getBool('use_back_camera') ?? true;
-      _showEatingTimer = prefs.getBool('show_eating_timer') ?? true;
       // VideoModeScreenでは設定に関係なく動画停止モードに固定
       _warningAction = 'youtube_cast';
       _enableYouTubeCast = true;
       _alertOnNoFaceDetected = prefs.getBool('alert_on_no_face_detected') ?? false;
       
-      final rankingData = prefs.getStringList('eating_duration_ranking');
-      if (rankingData != null && rankingData.length == 3) {
-        _eatingDurationRanking = rankingData.map((e) => int.parse(e)).toList();
-      }
     });
     debugPrint('🎬 VideoModeScreen settings loaded - Warning action: $_warningAction, YouTube enabled: $_enableYouTubeCast');
   }
@@ -2929,12 +2449,9 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
     await prefs.setString('audio_file', _audioFile);
     await prefs.setString('custom_audio_path', _customAudioPath);
     await prefs.setBool('use_back_camera', _useBackCamera);
-    await prefs.setBool('show_eating_timer', _showEatingTimer);
     // warning_actionとenable_youtube_castは画面固有なので保存しない
     await prefs.setBool('alert_on_no_face_detected', _alertOnNoFaceDetected);
     
-    await prefs.setStringList('eating_duration_ranking', 
-        _eatingDurationRanking.map((e) => e.toString()).toList());
   }
 
   Future<void> _initializeCamera() async {
@@ -2953,7 +2470,7 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
       
       _cameraController = CameraController(
         camera,
-        ResolutionPreset.medium,
+        ResolutionPreset.high,
         enableAudio: false,
       );
       
@@ -2969,14 +2486,21 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
 
   Future<void> _initializeFaceDetector() async {
     try {
+      debugPrint('VideoMode: Initializing FaceDetector...');
       _faceDetector = FaceDetector(
         options: FaceDetectorOptions(
           enableContours: true,
           enableLandmarks: true,
+          enableClassification: false,
+          enableTracking: false,
+          minFaceSize: 0.05,
+          performanceMode: FaceDetectorMode.accurate,
         ),
       );
+      debugPrint('VideoMode: Face detector created successfully');
     } catch (e) {
-      // Continue without face detection
+      debugPrint('VideoMode: Face detector initialization error: $e');
+      debugPrint('VideoMode: Continuing without face detection');
     }
   }
 
@@ -3022,13 +2546,21 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
   }
 
   Future<void> _detectFaces(CameraImage image) async {
-    if (_faceDetector == null) return;
+    if (_faceDetector == null) {
+      debugPrint('VideoMode: FaceDetector is null - skipping detection');
+      return;
+    }
     
     try {
       final inputImage = _inputImageFromCameraImage(image);
-      if (inputImage == null) return;
+      if (inputImage == null) {
+        debugPrint('VideoMode: Failed to create InputImage from CameraImage');
+        return;
+      }
 
+      debugPrint('VideoMode: Processing image with FaceDetector...');
       final faces = await _faceDetector!.processImage(inputImage);
+      debugPrint('VideoMode: Detected ${faces.length} faces');
       
       if (mounted) {
         setState(() {
@@ -3038,6 +2570,7 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
         _analyzeMouthMovement(faces);
       }
     } catch (e) {
+      debugPrint('VideoMode: Face detection error: $e');
       // Continue on error
     }
   }
@@ -3238,10 +2771,6 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
     final removedFaceIds = _faceStates.keys.where((id) => !currentFaceIds.contains(id)).toList();
     for (final faceId in removedFaceIds) {
       final faceState = _faceStates[faceId]!;
-      if (faceState.currentEatingStartTime != null && faceState.isEating) {
-        final duration = DateTime.now().difference(faceState.currentEatingStartTime!).inSeconds;
-        _updateEatingDurationRanking(duration);
-      }
       faceState.dispose();
       _faceStates.remove(faceId);
     }
@@ -3385,11 +2914,6 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
     
     if (timeSinceLastMovement.inSeconds >= 1) {
       if (faceState.isEating) {
-        if (faceState.currentEatingStartTime != null) {
-          final duration = DateTime.now().difference(faceState.currentEatingStartTime!).inSeconds;
-          _updateEatingDurationRanking(duration);
-        }
-        
         setState(() {
           faceState.isEating = false;
           faceState.showNotEatingMessage = true;
@@ -3402,19 +2926,6 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
       }
     }
   }
-
-  void _updateEatingDurationRanking(int duration) {
-    if (duration > 0) {
-      _eatingDurationRanking.add(duration);
-      _eatingDurationRanking.sort((a, b) => b.compareTo(a));
-      if (_eatingDurationRanking.length > 3) {
-        _eatingDurationRanking = _eatingDurationRanking.take(3).toList();
-      }
-      _saveSettings();
-    }
-  }
-
-
 
   Future<void> _pauseYouTubeCast() async {
     if (_castController != null) {
@@ -3578,119 +3089,10 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
     );
   }
 
-  Widget _buildEatingTimerOverlay() {
-    if (!_showEatingTimer) return const SizedBox.shrink();
-    
-    final eatingFaces = _faceStates.values.where((state) => state.isEating).toList();
-    if (eatingFaces.isEmpty) return const SizedBox.shrink();
-    
-    final maxDuration = eatingFaces.map((state) => state.getCurrentEatingDuration()).reduce((a, b) => a > b ? a : b);
-    if (maxDuration == 0) return const SizedBox.shrink();
-    
-    return Positioned(
-      top: 20,
-      left: 0,
-      right: 0,
-      child: Center(
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 500),
-          curve: Curves.elasticOut,
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: _getTimerColors(maxDuration),
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(30),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.3),
-                blurRadius: 15,
-                offset: const Offset(0, 5),
-              ),
-            ],
-            border: Border.all(
-              color: Colors.white.withOpacity(0.8),
-              width: 3,
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('✨', style: TextStyle(fontSize: 18)),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'がんばってるね！',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  const Text('✨', style: TextStyle(fontSize: 18)),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('🍽️', style: TextStyle(fontSize: 24)),
-                    const SizedBox(width: 12),
-                    Text(
-                      _formatDurationForTimer(maxDuration),
-                      style: const TextStyle(
-                        color: Color(0xFFFF6B35),
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        fontFamily: 'monospace',
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    const Text('🎉', style: TextStyle(fontSize: 24)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   String _formatDurationForTimer(int seconds) {
     final minutes = seconds ~/ 60;
     final remainingSeconds = seconds % 60;
     return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
-  }
-
-  List<Color> _getTimerColors(int seconds) {
-    if (seconds < 10) {
-      return [
-        const Color(0xFF4CAF50).withOpacity(0.95),
-        const Color(0xFF8BC34A).withOpacity(0.95),
-      ];
-    } else if (seconds < 30) {
-      return [
-        const Color(0xFF2196F3).withOpacity(0.95),
-        const Color(0xFF03A9F4).withOpacity(0.95),
-      ];
-    } else {
-      return [
-        const Color(0xFFFF9800).withOpacity(0.95),
-        const Color(0xFFFFC107).withOpacity(0.95),
-      ];
-    }
   }
 
   Widget _buildControlPanel() {
@@ -3843,7 +3245,7 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
             debugPrint('🏠 Navigating to home from AudioModeScreen');
             Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(builder: (context) => PrivacyCheckWrapper(cameras: widget.cameras)),
+              MaterialPageRoute(builder: (context) => HomeScreen(cameras: widget.cameras)),
               (route) => false, // 全ての前の画面を削除
             );
           },
@@ -3890,7 +3292,7 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
             debugPrint('🏠 Navigating to home from AudioModeScreen');
             Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(builder: (context) => PrivacyCheckWrapper(cameras: widget.cameras)),
+              MaterialPageRoute(builder: (context) => HomeScreen(cameras: widget.cameras)),
               (route) => false, // 全ての前の画面を削除
             );
           },
@@ -3928,7 +3330,7 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
             debugPrint('🏠 Navigating to home from AudioModeScreen');
             Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(builder: (context) => PrivacyCheckWrapper(cameras: widget.cameras)),
+              MaterialPageRoute(builder: (context) => HomeScreen(cameras: widget.cameras)),
               (route) => false, // 全ての前の画面を削除
             );
           },
@@ -3968,7 +3370,6 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
                child: Stack(
                  children: [
                    _buildCameraLayer(context),
-                   _buildEatingTimerOverlay(),
                  ],
                ),
              ),
