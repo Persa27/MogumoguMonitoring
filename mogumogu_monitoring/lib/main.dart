@@ -20,6 +20,66 @@ void main() async {
   runApp(MogumoguApp(cameras: cameras));
 }
 
+/// 共通の読み込み画面
+Widget buildLoadingScreen() {
+  return Scaffold(
+    body: Column(
+      children: [
+        // Top status bar area (スマートフォンのトップバー用スペース)
+        Container(
+          width: double.infinity,
+          height: 40, // トップバー用のスペース
+          color: Colors.white,
+        ),
+        
+        // Rest of the screen
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // 残りの画面の高さに基づいて背景画像とボタンエリアの比率を調整
+              final remainingHeight = constraints.maxHeight;
+              final backgroundHeight = remainingHeight * 0.7; // 残り画面の70%を背景画像に
+              
+              return Column(
+                children: [
+                  // Background image area (70%の高さ)
+                  Container(
+                    width: double.infinity,
+                    height: backgroundHeight,
+                    decoration: const BoxDecoration(
+                      image: DecorationImage(
+                        image: AssetImage('assets/images/loading.png'),
+                        fit: BoxFit.fitWidth, // 幅に合わせてフィット
+                        alignment: Alignment.topCenter, // 上部中央揃い
+                      ),
+                      // Fallback gradient if image fails to load
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0xFFE8F5E8),
+                          Color(0xFFF1F8E9),
+                        ],
+                      ),
+                    ),
+                  ),
+                  
+                  // Empty area (残り30%)
+                  Expanded(
+                    child: Container(
+                      color: Color(0xFFF4FBF8),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
 /// 共通の基本設定UI関数
 Widget buildBasicSettings(
   StateSetter setDialogState,
@@ -1687,62 +1747,7 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
 
     // 初期化中の場合
     if (!_isInitialized || _cameraController == null || !_cameraController!.value.isInitialized) {
-      return Scaffold(
-        body: Column(
-          children: [
-            // Top status bar area (スマートフォンのトップバー用スペース)
-            Container(
-              width: double.infinity,
-              height: 40, // トップバー用のスペース
-              color: Colors.white,
-            ),
-            
-            // Rest of the screen
-            Expanded(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  // 残りの画面の高さに基づいて背景画像とボタンエリアの比率を調整
-                  final remainingHeight = constraints.maxHeight;
-                  final backgroundHeight = remainingHeight * 0.7; // 残り画面の70%を背景画像に
-                  
-                  return Column(
-                    children: [
-                      // Background image area (70%の高さ)
-                      Container(
-                        width: double.infinity,
-                        height: backgroundHeight,
-                        decoration: BoxDecoration(
-                          image: DecorationImage(
-                            image: const AssetImage('assets/images/loading.png'),
-                            fit: BoxFit.fitWidth, // 幅に合わせてフィット
-                            alignment: Alignment.topCenter, // 上部中央揃い
-                          ),
-                          // Fallback gradient if image fails to load
-                          gradient: const LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Color(0xFFE8F5E8),
-                              Color(0xFFF1F8E9),
-                            ],
-                          ),
-                        ),
-                      ),
-                      
-                      // Empty area (残り30%)
-                      Expanded(
-                        child: Container(
-                          color: const Color(0xFFF4FBF8),
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      );
+      return buildLoadingScreen();
     }
 
     return Scaffold(
@@ -3103,62 +3108,7 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
     }
 
     if (!_isInitialized || _cameraController == null || !_cameraController!.value.isInitialized) {
-      return Scaffold(
-        body: Column(
-          children: [
-            // Top status bar area (スマートフォンのトップバー用スペース)
-            Container(
-              width: double.infinity,
-              height: 40, // トップバー用のスペース
-              color: Colors.white,
-            ),
-            
-            // Rest of the screen
-            Expanded(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  // 残りの画面の高さに基づいて背景画像とボタンエリアの比率を調整
-                  final remainingHeight = constraints.maxHeight;
-                  final backgroundHeight = remainingHeight * 0.7; // 残り画面の70%を背景画像に
-                  
-                  return Column(
-                    children: [
-                      // Background image area (70%の高さ)
-                      Container(
-                        width: double.infinity,
-                        height: backgroundHeight,
-                        decoration: const BoxDecoration(
-                          image: DecorationImage(
-                            image: AssetImage('assets/images/loading.png'),
-                            fit: BoxFit.fitWidth, // 幅に合わせてフィット
-                            alignment: Alignment.topCenter, // 上部中央揃い
-                          ),
-                          // Fallback gradient if image fails to load
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Color(0xFFE8F5E8),
-                              Color(0xFFF1F8E9),
-                            ],
-                          ),
-                        ),
-                      ),
-                      
-                      // Empty area (残り30%)
-                      Expanded(
-                        child: Container(
-                          color: Color(0xFFF4FBF8),
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      );
+      return buildLoadingScreen();
     }
 
     return Scaffold(
