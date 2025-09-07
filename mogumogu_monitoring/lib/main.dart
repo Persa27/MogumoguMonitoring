@@ -20,6 +20,166 @@ void main() async {
   runApp(MogumoguApp(cameras: cameras));
 }
 
+/// 共通の基本設定UI関数
+Widget buildBasicSettings(
+  StateSetter setDialogState,
+  double movementThreshold,
+  double jawThreshold,
+  double openThreshold,
+  double headMovementThreshold,
+  int notEatingDuration,
+  bool alertOnNoFaceDetected,
+  Function(double) onMovementThresholdChanged,
+  Function(double) onJawThresholdChanged,
+  Function(double) onOpenThresholdChanged,
+  Function(double) onHeadMovementThresholdChanged,
+  Function(int) onNotEatingDurationChanged,
+  Function(bool) onAlertOnNoFaceDetectedChanged,
+) {
+  return Column(
+    children: [
+      // 動きの閾値設定
+      ListTile(
+        title: const Text('動きの閾値'),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Slider(
+              value: movementThreshold,
+              min: 0.005,
+              max: 0.2,
+              divisions: 39,
+              label: movementThreshold.toStringAsFixed(3),
+              onChanged: (value) {
+                setDialogState(() {
+                  onMovementThresholdChanged(value);
+                });
+              },
+            ),
+            const Text(
+              '値が小さいほど小さな動きでも検知します（0.005-0.2）',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+      // 顎の動きの閾値設定
+      ListTile(
+        title: const Text('顎の動きの閾値'),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Slider(
+              value: jawThreshold,
+              min: 0.005,
+              max: 0.2,
+              divisions: 39,
+              label: jawThreshold.toStringAsFixed(3),
+              onChanged: (value) {
+                setDialogState(() {
+                  onJawThresholdChanged(value);
+                });
+              },
+            ),
+            const Text(
+              '顎の縦方向の動きを検知する閾値（0.005-0.2）',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+      // 開閉度の閾値設定
+      ListTile(
+        title: const Text('口の開閉度の閾値'),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Slider(
+              value: openThreshold,
+              min: 0.005,
+              max: 0.2,
+              divisions: 39,
+              label: openThreshold.toStringAsFixed(3),
+              onChanged: (value) {
+                setDialogState(() {
+                  onOpenThresholdChanged(value);
+                });
+              },
+            ),
+            const Text(
+              '口の開閉を検知する閾値（0.005-0.2）',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+      // 頭の動きの閾値設定
+      ListTile(
+        title: const Text('頭の動きの閾値'),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Slider(
+              value: headMovementThreshold,
+              min: 0.01,
+              max: 0.5,
+              divisions: 49,
+              label: headMovementThreshold.toStringAsFixed(3),
+              onChanged: (value) {
+                setDialogState(() {
+                  onHeadMovementThresholdChanged(value);
+                });
+              },
+            ),
+            const Text(
+              '頭の急激な動きを検知する閾値（0.01-0.5）',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+      // 警告までの時間設定
+      ListTile(
+        title: const Text('警告までの時間'),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Slider(
+              value: notEatingDuration.toDouble(),
+              min: 1,
+              max: 60,
+              divisions: 11,
+              label: '${notEatingDuration}秒',
+              onChanged: (value) {
+                setDialogState(() {
+                  onNotEatingDurationChanged(value.round());
+                });
+              },
+            ),
+            const Text(
+              '食べていないと判断してから警告するまでの時間（1-60秒）',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+      // 顔検知なしアラート設定
+      ListTile(
+        title: const Text('顔検知なしアラート'),
+        subtitle: const Text('顔が検知されない時に警告を表示'),
+        trailing: Switch(
+          value: alertOnNoFaceDetected,
+          onChanged: (value) {
+            setDialogState(() {
+              onAlertOnNoFaceDetectedChanged(value);
+            });
+          },
+        ),
+      ),
+    ],
+  );
+}
+
 class MogumoguApp extends StatelessWidget {
   final List<CameraDescription> cameras;
 
@@ -1121,330 +1281,10 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // 動きの閾値設定（顔幅比で正規化）
-                    ListTile(
-                      title: const Text('動きの閾値'),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                                                    Slider(
-                        value: _movementThreshold,
-                            min: 0.005,
-                            max: 0.2,
-                            divisions: 39,
-                            label: _movementThreshold.toStringAsFixed(3),
-                        onChanged: (value) {
-                          setDialogState(() {
-                            _movementThreshold = value;
-                          });
-                        },
-                      ),
-                                                    const Text(
-                            '値が小さいほど小さな動きでも検知します（0.005-0.2）\n※垂直成分のみで判定、鼻先基準で頭の動きを補正',
-                            style: TextStyle(fontSize: 12, color: Colors.grey),
-                          ),
-                        ],
-                      ),
-                    ),
-                    // 顎の動きの閾値設定
-                    ListTile(
-                      title: const Text('顎の動きの閾値'),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Slider(
-                        value: _jawThreshold,
-                            min: 0.010,
-                        max: 0.200,
-                            divisions: 19,
-                        label: _jawThreshold.toStringAsFixed(3),
-                        onChanged: (value) {
-                          setDialogState(() {
-                            _jawThreshold = value;
-                          });
-                        },
-                          ),
-                          const Text(
-                            'この値を超える動きで顎が動いたと判断します（0.010-0.200）',
-                            style: TextStyle(fontSize: 12, color: Colors.grey),
-                          ),
-                        ],
-                      ),
-                    ),
-                    // 開閉度の閾値設定
-                    ListTile(
-                      title: const Text('開閉度の閾値'),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Slider(
-                        value: _openThreshold,
-                            min: 0.020,
-                        max: 0.200,
-                            divisions: 9,
-                        label: _openThreshold.toStringAsFixed(3),
-                        onChanged: (value) {
-                          setDialogState(() {
-                            _openThreshold = value;
-                          });
-                        },
-                          ),
-                          const Text(
-                            'この値を超える開閉度で食事と判断します（0.020-0.200）',
-                            style: TextStyle(fontSize: 12, color: Colors.grey),
-                          ),
-                        ],
-                      ),
-                    ),
-                    // 頭の動きの閾値設定
-                    ListTile(
-                      title: const Text('頭の動きの閾値'),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Slider(
-                        value: _headMovementThreshold,
-                            min: 0.020,
-                        max: 0.200,
-                            divisions: 18,
-                        label: _headMovementThreshold.toStringAsFixed(3),
-                        onChanged: (value) {
-                          setDialogState(() {
-                            _headMovementThreshold = value;
-                          });
-                        },
-                          ),
-                          const Text(
-                            'この値を超える頭の動きがあると食事判定を無効にします（0.020-0.200）',
-                            style: TextStyle(fontSize: 12, color: Colors.grey),
-                          ),
-                        ],
-                      ),
-                    ),
-                    // 判定時間設定（1秒刻み）
-                    ListTile(
-                      title: const Text('判定時間（秒）'),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Slider(
-                        value: _notEatingDuration.toDouble(),
-                            min: 1,
-                        max: 60,
-                            divisions: 59,
-                        label: _notEatingDuration.toString(),
-                        onChanged: (value) {
-                          setDialogState(() {
-                            _notEatingDuration = value.round();
-                          });
-                        },
-                          ),
-                          const Text(
-                            'この時間食べていないと警告します（1-60秒）',
-                            style: TextStyle(fontSize: 12, color: Colors.grey),
-                          ),
-                        ],
-                      ),
-                    ),
+                    // 基本設定
+                    _buildBasicSettings(setDialogState),
                     const Divider(),
-                    // 顔検知なしアラート設定
-                    ListTile(
-                      title: const Text('顔検知なしアラート'),
-                      subtitle: const Text('設定時間内に顔が検知されない場合に警告します'),
-                      trailing: Switch(
-                        value: _alertOnNoFaceDetected,
-                        onChanged: (value) {
-                          setDialogState(() {
-                            _alertOnNoFaceDetected = value;
-                          });
-                        },
-                      ),
-                    ),
 
-                    const Divider(),
-                    // YouTube Cast制御の有効/無効設定
-                    ListTile(
-                      title: const Text('YouTube Cast制御'),
-                      subtitle: const Text('キャスト中のYouTube動画を制御します'),
-                      trailing: Switch(
-                        value: _enableYouTubeCast,
-                        onChanged: (value) {
-                          setDialogState(() {
-                            _enableYouTubeCast = value;
-                            // YouTube Cast制御を有効にした場合、警告アクションをyoutube_castに設定
-                            if (value) {
-                              _warningAction = 'youtube_cast';
-                            } else {
-                              _warningAction = 'audio';
-                            }
-                          });
-                        },
-                      ),
-                    ),
-                    // 警告アクション設定
-                    if (_enableYouTubeCast) ...[
-                      ListTile(
-                        title: const Text('警告アクション'),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            DropdownButton<String>(
-                              value: _warningAction,
-                              isExpanded: true,
-                              items: const [
-                                DropdownMenuItem(value: 'audio', child: Text('音声を再生')),
-                                DropdownMenuItem(value: 'youtube_cast', child: Text('YouTube動画を停止')),
-                              ],
-                              onChanged: (value) {
-                                if (value != null) {
-                                  setDialogState(() {
-                                    _warningAction = value;
-                                  });
-                                }
-                              },
-                            ),
-                            const Text(
-                              '食べていない状態が続いたときの動作を選択',
-                              style: TextStyle(fontSize: 12, color: Colors.grey),
-                            ),
-                          ],
-                        ),
-                      ),
-                      // Cast接続状態表示
-                      ListTile(
-                        title: const Text('Cast接続状態'),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Icon(
-                                  _isCastConnected ? MdiIcons.cast : MdiIcons.castOff,
-                                  color: _isCastConnected ? Colors.green : Colors.grey,
-                                  size: 20,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    _isCastConnected 
-                                        ? 'Cast接続中${_currentCastTitle.isNotEmpty ? ': $_currentCastTitle' : ''}'
-                                        : 'Cast未接続',
-                                    style: TextStyle(
-                                      color: _isCastConnected ? Colors.green : Colors.grey,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            // テスト用制御ボタン
-                            Row(
-                              children: [
-                                ElevatedButton.icon(
-                                  onPressed: () async {
-                                    if (_castController != null) {
-                                      try {
-                                        final connected = await _castController!.isConnected();
-                                        setDialogState(() {
-                                          _isCastConnected = connected;
-                                        });
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(
-                                            content: Text('接続状態: ${connected ? "接続中" : "未接続"}'),
-                                            duration: const Duration(seconds: 2),
-                                          ),
-                                        );
-                                      } catch (e) {
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(
-                                            content: Text('エラー: $e'),
-                                            backgroundColor: Colors.red,
-                                          ),
-                                        );
-                                      }
-                                    }
-                                  },
-                                  icon: const Icon(Icons.refresh, size: 16),
-                                  label: const Text('更新', style: TextStyle(fontSize: 12)),
-                                  style: ElevatedButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                    minimumSize: const Size(0, 32),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                ElevatedButton.icon(
-                                  onPressed: _castController != null ? () async {
-                                    try {
-                                      await _castController!.pause();
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('一時停止コマンドを送信'),
-                                          backgroundColor: Colors.orange,
-                                        ),
-                                      );
-                                    } catch (e) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(
-                                          content: Text('エラー: $e'),
-                                          backgroundColor: Colors.red,
-                                        ),
-                                      );
-                                    }
-                                  } : null,
-                                  icon: const Icon(Icons.pause, size: 16),
-                                  label: const Text('停止', style: TextStyle(fontSize: 12)),
-                                  style: ElevatedButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                    minimumSize: const Size(0, 32),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                ElevatedButton.icon(
-                                  onPressed: _castController != null ? () async {
-                                    try {
-                                      await _castController!.play();
-                                      // ScaffoldMessenger.of(context).showSnackBar(
-                                      //   const SnackBar(
-                                      //     content: Text('再生コマンドを送信'),
-                                      //     backgroundColor: Colors.green,
-                                      //   ),
-                                      // );
-                                    } catch (e) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(
-                                          content: Text('エラー: $e'),
-                                          backgroundColor: Colors.red,
-                                        ),
-                                      );
-                                    }
-                                  } : null,
-                                  icon: const Icon(Icons.play_arrow, size: 16),
-                                  label: const Text('再生', style: TextStyle(fontSize: 12)),
-                                  style: ElevatedButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                    minimumSize: const Size(0, 32),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                    const Divider(),
-                    ListTile(
-                      title: const Text('ランキングをリセット'),
-                      subtitle: const Text('連続食事時間のランキングをリセットします'),
-                      trailing: ElevatedButton(
-                        onPressed: () {
-                          setDialogState(() {
-                            _sessionStartTime = DateTime.now();
-                          });
-                        },
-                        child: const Text('リセット'),
-                      ),
-                    ),
                   ],
                 ),
               ),
@@ -1460,28 +1300,6 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
                 ),
                 TextButton(
                   onPressed: () async {
-                    // YouTube Cast制御の設定が変更された場合の処理
-                    final oldEnableYouTubeCast = _enableYouTubeCast;
-                    
-                    await _saveSettings();
-                    
-                    // YouTube Cast制御の設定が変更された場合
-                    if (oldEnableYouTubeCast != _enableYouTubeCast) {
-                      if (_enableYouTubeCast) {
-                        // 有効になった場合は初期化
-                        await _initializeCastController();
-                      } else {
-                        // 無効になった場合は破棄
-                        _castController?.dispose();
-                        _castController = null;
-                        setState(() {
-                          _isCastConnected = false;
-                          _isCastPlaying = false;
-                          _currentCastTitle = '';
-                        });
-                      }
-                    }
-                    
                     if (mounted) {
                       setState(() {
                         _isSettingsOpen = false;
@@ -1496,6 +1314,24 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
           },
         );
       },
+    );
+  }
+
+  Widget _buildBasicSettings(StateSetter setDialogState) {
+    return buildBasicSettings(
+      setDialogState,
+      _movementThreshold,
+      _jawThreshold,
+      _openThreshold,
+      _headMovementThreshold,
+      _notEatingDuration,
+      _alertOnNoFaceDetected,
+      (value) => _movementThreshold = value,
+      (value) => _jawThreshold = value,
+      (value) => _openThreshold = value,
+      (value) => _headMovementThreshold = value,
+      (value) => _notEatingDuration = value,
+      (value) => _alertOnNoFaceDetected = value,
     );
   }
 
@@ -1852,63 +1688,59 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
     // 初期化中の場合
     if (!_isInitialized || _cameraController == null || !_cameraController!.value.isInitialized) {
       return Scaffold(
-        appBar: AppBar(
-          title: Row(
-            children: [
-              const Text('🍽️', style: TextStyle(fontSize: 24)),
-              const SizedBox(width: 8),
-              const Text(
-                'もぐもぐウォッチ',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-            ],
-          ),
-          backgroundColor: const Color(0xFF4CAF50),
-        ),
-        body: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Color(0xFFE8F5E8),
-                Color(0xFFF1F8E9),
-              ],
+        body: Column(
+          children: [
+            // Top status bar area (スマートフォンのトップバー用スペース)
+            Container(
+              width: double.infinity,
+              height: 40, // トップバー用のスペース
+              color: Colors.white,
             ),
-          ),
-          child: const Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-                Text('🔄', style: TextStyle(fontSize: 80)),
-                SizedBox(height: 24),
-                CircularProgressIndicator(
-                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4CAF50)),
-                  strokeWidth: 6,
-                ),
-                SizedBox(height: 24),
-              Text(
-                  'じゅんびちゅう...',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF4CAF50),
-                  ),
+            
+            // Rest of the screen
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  // 残りの画面の高さに基づいて背景画像とボタンエリアの比率を調整
+                  final remainingHeight = constraints.maxHeight;
+                  final backgroundHeight = remainingHeight * 0.7; // 残り画面の70%を背景画像に
+                  
+                  return Column(
+                    children: [
+                      // Background image area (70%の高さ)
+                      Container(
+                        width: double.infinity,
+                        height: backgroundHeight,
+                        decoration: BoxDecoration(
+                          image: DecorationImage(
+                            image: const AssetImage('assets/images/loading.png'),
+                            fit: BoxFit.fitWidth, // 幅に合わせてフィット
+                            alignment: Alignment.topCenter, // 上部中央揃い
+                          ),
+                          // Fallback gradient if image fails to load
+                          gradient: const LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Color(0xFFE8F5E8),
+                              Color(0xFFF1F8E9),
+                            ],
+                          ),
+                        ),
+                      ),
+                      
+                      // Empty area (残り30%)
+                      Expanded(
+                        child: Container(
+                          color: const Color(0xFFF4FBF8),
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
-                SizedBox(height: 12),
-              Text(
-                  'カメラとAIをじゅんびしています',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: Color(0xFF757575),
-                  ),
-              ),
-            ],
             ),
-          ),
+          ],
         ),
       );
     }
@@ -2999,11 +2831,6 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
                     // 基本設定
                     _buildBasicSettings(setDialogState),
                     const Divider(),
-                    // YouTube Cast設定
-                    _buildYouTubeCastSettings(setDialogState),
-                    const Divider(),
-                    // その他設定
-                    _buildOtherSettings(setDialogState),
                   ],
                 ),
               ),
@@ -3277,38 +3104,59 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
 
     if (!_isInitialized || _cameraController == null || !_cameraController!.value.isInitialized) {
       return Scaffold(
-        appBar: AppBar(
-          title: const Text(
-            '動画停止モード',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
+        body: Column(
+          children: [
+            // Top status bar area (スマートフォンのトップバー用スペース)
+            Container(
+              width: double.infinity,
+              height: 40, // トップバー用のスペース
               color: Colors.white,
             ),
-          ),
-                     backgroundColor: const Color(0xFF65B9D0),
-          leading:         IconButton(
-          icon: const Icon(Icons.home, color: Colors.white),
-          onPressed: () {
-            debugPrint('🏠 Navigating to home from AudioModeScreen');
-            Navigator.pushAndRemoveUntil(
-              context,
-              MaterialPageRoute(builder: (context) => HomeScreen(cameras: widget.cameras)),
-              (route) => false, // 全ての前の画面を削除
-            );
-          },
-        ),
-        ),
-        body: const Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text('🔄', style: TextStyle(fontSize: 80)),
-              SizedBox(height: 24),
-              CircularProgressIndicator(),
-              SizedBox(height: 24),
-              Text('じゅんびちゅう...', style: TextStyle(fontSize: 24)),
-            ],
-          ),
+            
+            // Rest of the screen
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  // 残りの画面の高さに基づいて背景画像とボタンエリアの比率を調整
+                  final remainingHeight = constraints.maxHeight;
+                  final backgroundHeight = remainingHeight * 0.7; // 残り画面の70%を背景画像に
+                  
+                  return Column(
+                    children: [
+                      // Background image area (70%の高さ)
+                      Container(
+                        width: double.infinity,
+                        height: backgroundHeight,
+                        decoration: const BoxDecoration(
+                          image: DecorationImage(
+                            image: AssetImage('assets/images/loading.png'),
+                            fit: BoxFit.fitWidth, // 幅に合わせてフィット
+                            alignment: Alignment.topCenter, // 上部中央揃い
+                          ),
+                          // Fallback gradient if image fails to load
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Color(0xFFE8F5E8),
+                              Color(0xFFF1F8E9),
+                            ],
+                          ),
+                        ),
+                      ),
+                      
+                      // Empty area (残り30%)
+                      Expanded(
+                        child: Container(
+                          color: Color(0xFFF4FBF8),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
         ),
       );
     }
@@ -3381,302 +3229,20 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
   }
 
   Widget _buildBasicSettings(StateSetter setDialogState) {
-    return Column(
-      children: [
-        // 動きの閾値設定
-        ListTile(
-          title: const Text('動きの閾値'),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Slider(
-                value: _movementThreshold,
-                min: 0.005,
-                max: 0.2,
-                divisions: 39,
-                label: _movementThreshold.toStringAsFixed(3),
-                onChanged: (value) {
-                  setDialogState(() {
-                    _movementThreshold = value;
-                  });
-                },
-              ),
-              const Text(
-                '値が小さいほど小さな動きでも検知します（0.005-0.2）',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ],
-          ),
-        ),
-        // 顎の動きの閾値設定
-        ListTile(
-          title: const Text('顎の動きの閾値'),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Slider(
-                value: _jawThreshold,
-                min: 0.005,
-                max: 0.2,
-                divisions: 39,
-                label: _jawThreshold.toStringAsFixed(3),
-                onChanged: (value) {
-                  setDialogState(() {
-                    _jawThreshold = value;
-                  });
-                },
-              ),
-              const Text(
-                '顎の縦方向の動きを検知する閾値（0.005-0.2）',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ],
-          ),
-        ),
-        // 開閉度の閾値設定
-        ListTile(
-          title: const Text('口の開閉度の閾値'),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Slider(
-                value: _openThreshold,
-                min: 0.005,
-                max: 0.2,
-                divisions: 39,
-                label: _openThreshold.toStringAsFixed(3),
-                onChanged: (value) {
-                  setDialogState(() {
-                    _openThreshold = value;
-                  });
-                },
-              ),
-              const Text(
-                '口の開閉を検知する閾値（0.005-0.2）',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ],
-          ),
-        ),
-        // 頭の動きの閾値設定
-        ListTile(
-          title: const Text('頭の動きの閾値'),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Slider(
-                value: _headMovementThreshold,
-                min: 0.01,
-                max: 0.5,
-                divisions: 49,
-                label: _headMovementThreshold.toStringAsFixed(3),
-                onChanged: (value) {
-                  setDialogState(() {
-                    _headMovementThreshold = value;
-                  });
-                },
-              ),
-              const Text(
-                '頭の急激な動きを検知する閾値（0.01-0.5）',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ],
-          ),
-        ),
-        // 警告までの時間設定
-        ListTile(
-          title: const Text('警告までの時間'),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Slider(
-                value: _notEatingDuration.toDouble(),
-                min: 5,
-                max: 60,
-                divisions: 11,
-                label: '${_notEatingDuration}秒',
-                onChanged: (value) {
-                  setDialogState(() {
-                    _notEatingDuration = value.round();
-                  });
-                },
-              ),
-              const Text(
-                '食べていないと判断してから警告するまでの時間（5-60秒）',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildYouTubeCastSettings(StateSetter setDialogState) {
-    return Column(
-      children: [
-        // YouTube Cast制御の有効/無効設定
-        ListTile(
-          title: const Text('YouTube Cast制御'),
-          subtitle: const Text('キャスト中のYouTube動画を制御します'),
-          trailing: Switch(
-            value: _enableYouTubeCast,
-            onChanged: (value) {
-              setDialogState(() {
-                _enableYouTubeCast = value;
-                if (value) {
-                  _warningAction = 'youtube_cast';
-                } else {
-                  _warningAction = 'audio';
-                }
-              });
-            },
-          ),
-        ),
-        // 警告アクション設定
-        if (_enableYouTubeCast) ...[
-          ListTile(
-            title: const Text('警告アクション'),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                RadioListTile<String>(
-                  title: const Text('YouTube Cast制御'),
-                  subtitle: const Text('キャスト中の動画を自動停止/再生'),
-                  value: 'youtube_cast',
-                  groupValue: _warningAction,
-                  onChanged: (value) {
-                    if (value != null) {
-                      setDialogState(() {
-                        _warningAction = value;
-                      });
-                    }
-                  },
-                ),
-                RadioListTile<String>(
-                  title: const Text('音声警告'),
-                  subtitle: const Text('警告音を再生'),
-                  value: 'audio',
-                  groupValue: _warningAction,
-                  onChanged: (value) {
-                    if (value != null) {
-                      setDialogState(() {
-                        _warningAction = value;
-                      });
-                    }
-                  },
-                ),
-              ],
-            ),
-          ),
-          // YouTube Cast制御のテスト機能
-          if (_warningAction == 'youtube_cast') ...[
-            ListTile(
-              title: const Text('YouTube Cast制御テスト'),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('接続状態: ${_isCastConnected ? "接続中" : "未接続"}'),
-                  if (_isCastConnected) ...[
-                    Text('再生状態: ${_isCastPlaying ? "再生中" : "停止中"}'),
-                    if (_currentCastTitle.isNotEmpty)
-                      Text('タイトル: $_currentCastTitle', 
-                          style: const TextStyle(fontSize: 12)),
-                  ],
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: () async {
-                          try {
-                            final connected = await _castController?.isConnected() ?? false;
-                            setDialogState(() {
-                              _isCastConnected = connected;
-                            });
-                          } catch (e) {
-                            // エラーハンドリング
-                          }
-                        },
-                        icon: const Icon(Icons.refresh, size: 16),
-                        label: const Text('更新', style: TextStyle(fontSize: 12)),
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          minimumSize: const Size(0, 32),
-                        ),
-                      ),
-                      ElevatedButton.icon(
-                        onPressed: _castController != null ? () async {
-                          try {
-                            await _castController!.pause();
-                          } catch (e) {
-                            // エラーハンドリング
-                          }
-                        } : null,
-                        icon: const Icon(Icons.pause, size: 16),
-                        label: const Text('停止', style: TextStyle(fontSize: 12)),
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          minimumSize: const Size(0, 32),
-                        ),
-                      ),
-                      ElevatedButton.icon(
-                        onPressed: _castController != null ? () async {
-                          try {
-                            await _castController!.play();
-                          } catch (e) {
-                            // エラーハンドリング
-                          }
-                        } : null,
-                        icon: const Icon(Icons.play_arrow, size: 16),
-                        label: const Text('再生', style: TextStyle(fontSize: 12)),
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          minimumSize: const Size(0, 32),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ],
-      ],
-    );
-  }
-
-  Widget _buildOtherSettings(StateSetter setDialogState) {
-    return Column(
-      children: [
-        // 顔検知なしアラート設定
-        ListTile(
-          title: const Text('顔検知なしアラート'),
-          subtitle: const Text('顔が検知されない時に警告を表示'),
-          trailing: Switch(
-            value: _alertOnNoFaceDetected,
-            onChanged: (value) {
-              setDialogState(() {
-                _alertOnNoFaceDetected = value;
-              });
-            },
-          ),
-        ),
-        // カメラ切り替え設定
-        ListTile(
-          title: const Text('カメラ'),
-          subtitle: const Text('使用するカメラを選択'),
-          trailing: Switch(
-            value: _useBackCamera,
-            onChanged: (value) {
-              setDialogState(() {
-                _useBackCamera = value;
-              });
-            },
-          ),
-          leading: Icon(_useBackCamera ? Icons.camera_rear : Icons.camera_front),
-        ),
-      ],
+    return buildBasicSettings(
+      setDialogState,
+      _movementThreshold,
+      _jawThreshold,
+      _openThreshold,
+      _headMovementThreshold,
+      _notEatingDuration,
+      _alertOnNoFaceDetected,
+      (value) => _movementThreshold = value,
+      (value) => _jawThreshold = value,
+      (value) => _openThreshold = value,
+      (value) => _headMovementThreshold = value,
+      (value) => _notEatingDuration = value,
+      (value) => _alertOnNoFaceDetected = value,
     );
   }
 
