@@ -1,5 +1,5 @@
 name: mogumogu_monitoring
-description: "A new Flutter project."
+description: "もぐもぐウォッチ - 食事監視アプリ"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -45,19 +45,25 @@ dependencies:
   audioplayers: ^6.0.0
   
   # Settings storage
-  shared_preferences: ^2.2.2
+  shared_preferences: ^2.3.2
   
   # Permission handling
   permission_handler: ^11.3.1
   
   # File picker for custom audio files
-  file_picker: ^8.0.0+1
+  file_picker: ^8.1.2
   
   # HTTP通信用（YouTube Cast制御）
   http: ^1.1.0
   
   # UI用パッケージ（YouTube Cast制御）
   material_design_icons_flutter: ^7.0.7296
+  
+  # スリープ防止
+  wakelock_plus: ^1.2.8
+  
+  # Google AdMob
+  google_mobile_ads: ^6.0.0
 
 dev_dependencies:
   flutter_test:

@@ -7,17 +7,87 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:material_design_icons_flutter/material_design_icons_flutter.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'cast_controller.dart';
+import 'terms_and_privacy.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Mobile Ads SDK を初期化
+  await MobileAds.instance.initialize();
+  
   final cameras = await availableCameras();
   
   runApp(MogumoguApp(cameras: cameras));
+}
+
+/// バナー広告Widget
+class BannerAdWidget extends StatefulWidget {
+  @override
+  _BannerAdWidgetState createState() => _BannerAdWidgetState();
+}
+
+class _BannerAdWidgetState extends State<BannerAdWidget> {
+  BannerAd? _bannerAd;
+  bool _isLoaded = false;
+
+  // テスト用広告ユニットID
+  final String _adUnitId = 'ca-app-pub-3940256099942544/9214589741';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAd();
+  }
+
+  void _loadAd() {
+    _bannerAd = BannerAd(
+      adUnitId: _adUnitId,
+      request: const AdRequest(),
+      size: AdSize.banner,
+      listener: BannerAdListener(
+        onAdLoaded: (ad) {
+          debugPrint('バナー広告が読み込まれました: $ad');
+          setState(() {
+            _isLoaded = true;
+          });
+        },
+        onAdFailedToLoad: (ad, err) {
+          debugPrint('バナー広告の読み込みに失敗しました: $err');
+          ad.dispose();
+        },
+      ),
+    );
+
+    _bannerAd!.load();
+  }
+
+  @override
+  void dispose() {
+    _bannerAd?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_bannerAd != null && _isLoaded) {
+      return Container(
+        alignment: Alignment.center,
+        width: _bannerAd!.size.width.toDouble(),
+        height: _bannerAd!.size.height.toDouble(),
+        child: AdWidget(ad: _bannerAd!),
+      );
+    }
+    return Container(
+      height: 50, // 広告が読み込まれていない場合の高さ
+    );
+  }
 }
 
 /// 共通の読み込み画面
@@ -89,12 +159,14 @@ Widget buildBasicSettings(
   double headMovementThreshold,
   int notEatingDuration,
   bool alertOnNoFaceDetected,
+  int frameSkipInterval,
   Function(double) onMovementThresholdChanged,
   Function(double) onJawThresholdChanged,
   Function(double) onOpenThresholdChanged,
   Function(double) onHeadMovementThresholdChanged,
   Function(int) onNotEatingDurationChanged,
   Function(bool) onAlertOnNoFaceDetectedChanged,
+  Function(int) onFrameSkipIntervalChanged,
 ) {
   return Column(
     children: [
@@ -236,24 +308,88 @@ Widget buildBasicSettings(
           },
         ),
       ),
+      // フレームスキップ間隔設定
+      ListTile(
+        title: const Text('フレームスキップ間隔'),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Slider(
+              value: frameSkipInterval.toDouble(),
+              min: 1,
+              max: 20,
+              divisions: 19,
+              label: '$frameSkipInterval フレーム',
+              onChanged: (value) {
+                setDialogState(() {
+                  onFrameSkipIntervalChanged(value.round());
+                });
+              },
+            ),
+            const Text(
+              '値が大きいほど処理が軽くなります（1-20フレーム）',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
     ],
   );
 }
 
-class MogumoguApp extends StatelessWidget {
+class MogumoguApp extends StatefulWidget {
   final List<CameraDescription> cameras;
 
   const MogumoguApp({super.key, required this.cameras});
 
   @override
+  _MogumoguAppState createState() => _MogumoguAppState();
+}
+
+class _MogumoguAppState extends State<MogumoguApp> {
+  bool _isCheckingTerms = true;
+  bool _termsAccepted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkTermsAcceptance();
+  }
+
+  Future<void> _checkTermsAcceptance() async {
+    final accepted = await TermsAndPrivacyManager.isAllAccepted();
+    setState(() {
+      _termsAccepted = accepted;
+      _isCheckingTerms = false;
+    });
+  }
+
+  void _onTermsAccepted() {
+    setState(() {
+      _termsAccepted = true;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'もぐもぐ監視アプリ',
+      title: 'もぐもぐウォッチ',
       theme: ThemeData(
         primarySwatch: Colors.blue,
         useMaterial3: true,
       ),
-      home: HomeScreen(cameras: cameras),
+      home: _isCheckingTerms
+          ? const Scaffold(
+              backgroundColor: Colors.white,
+              body: Center(
+                child: CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFF9500)),
+                ),
+              ),
+            )
+          : _termsAccepted
+              ? HomeScreen(cameras: widget.cameras)
+              : TermsAndPrivacyScreen(onAccepted: _onTermsAccepted),
     );
   }
 }
@@ -463,6 +599,9 @@ class HomeScreen extends StatelessWidget {
               },
             ),
           ),
+          
+          // バナー広告
+          BannerAdWidget(),
         ],
       ),
     );
@@ -598,6 +737,17 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
   Timer? _uiUpdateTimer; // UI更新用タイマー
   Timer? _groupAudioTimer; // グループ音声制御用タイマー
   
+  // パフォーマンス最適化用（AudioMode）
+  int _frameSkipCounter = 0;
+  int _frameSkipInterval = 5; // 設定から読み込まれる（デフォルト5）
+  DateTime _lastFrameTime = DateTime.now();
+  static const int _minFrameSkipInterval = 1; // 最小間隔（設定可能範囲の下限）
+  static const int _maxFrameSkipInterval = 20; // 最大間隔（設定可能範囲の上限）
+  
+  // カメラ映像表示用
+  int _displayFrameSkipCounter = 0;
+  CameraImage? _currentDisplayFrame;
+  
   // YouTube Cast制御関連
   bool _isCastConnected = false;
   bool _isCastPlaying = false;
@@ -610,7 +760,7 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
   double _headMovementThreshold = 0.050; // 頭の動きの閾値（急激な動きを検知）
   int _notEatingDuration = 10; // 食べていないと判断する秒数（1秒刻み）
   String _audioFile = 'bell'; // 音声ファイル
-  String _customAudioPath = ''; // カスタム音声ファイルのパス
+  String? _customAudioPath; // カスタム音声ファイルのパス
   bool _useBackCamera = true; // バックカメラを使用するか
   bool _isSettingsOpen = false; // 設定モーダルが開いているかどうか
   
@@ -635,6 +785,10 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
     _warningAction = 'audio';
     _enableYouTubeCast = false;
     debugPrint('🎵 AudioModeScreen initialized - Warning action: $_warningAction, YouTube enabled: $_enableYouTubeCast');
+    
+    // スリープ防止を有効にする
+    _enableWakelock();
+    
     _initializeApp();
     
     // UI更新タイマーを開始（1秒ごとに更新）
@@ -712,12 +866,13 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
       _headMovementThreshold = prefs.getDouble('head_movement_threshold') ?? 0.050;
       _notEatingDuration = prefs.getInt('not_eating_duration') ?? 10;
       _audioFile = prefs.getString('audio_file') ?? 'bell';  // デフォルトをbellに変更
-      _customAudioPath = prefs.getString('custom_audio_path') ?? '';
+      _customAudioPath = prefs.getString('custom_audio_path');
       _useBackCamera = prefs.getBool('use_back_camera') ?? true;
       // AudioModeScreenでは設定に関係なく音声再生モードに固定
       _warningAction = 'audio';
       _enableYouTubeCast = false;
       _alertOnNoFaceDetected = prefs.getBool('alert_on_no_face_detected') ?? false;      
+      _frameSkipInterval = prefs.getInt('frame_skip_interval') ?? 5;
     });
     debugPrint('🎵 AudioModeScreen settings loaded - Warning action: $_warningAction, YouTube enabled: $_enableYouTubeCast');
   }
@@ -730,10 +885,15 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
     await prefs.setDouble('head_movement_threshold', _headMovementThreshold);
     await prefs.setInt('not_eating_duration', _notEatingDuration);
     await prefs.setString('audio_file', _audioFile);
-    await prefs.setString('custom_audio_path', _customAudioPath);
+    if (_customAudioPath != null) {
+      await prefs.setString('custom_audio_path', _customAudioPath!);
+    } else {
+      await prefs.remove('custom_audio_path');
+    }
     await prefs.setBool('use_back_camera', _useBackCamera);
     // warning_actionとenable_youtube_castは画面固有なので保存しない
     await prefs.setBool('alert_on_no_face_detected', _alertOnNoFaceDetected);
+    await prefs.setInt('frame_skip_interval', _frameSkipInterval);
   }
   
   // 時間を分秒形式でフォーマット
@@ -768,7 +928,7 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
       
       _cameraController = CameraController(
         camera,
-        ResolutionPreset.high,
+        ResolutionPreset.high,  // 顔検出精度向上のためhighに戻す
         enableAudio: false,
       );
       
@@ -790,12 +950,12 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
       debugPrint('AudioMode: Initializing FaceDetector...');
       _faceDetector = FaceDetector(
         options: FaceDetectorOptions(
-          enableContours: true,
-          enableLandmarks: true,
+          enableContours: false,  // 処理軽量化のため無効化
+          enableLandmarks: true,   // 唇検出に必要
           enableClassification: false,
           enableTracking: false,
-          minFaceSize: 0.05,
-          performanceMode: FaceDetectorMode.accurate,
+          minFaceSize: 0.05,       // 顔検出精度向上のため小さい顔も検出
+          performanceMode: FaceDetectorMode.accurate,  // 顔検出精度向上のためaccurateに戻す
         ),
       );
       debugPrint('AudioMode: Face detector created successfully');
@@ -817,8 +977,61 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
     }
   }
 
+  /// スリープ防止を有効にする
+  Future<void> _enableWakelock() async {
+    try {
+      await WakelockPlus.enable();
+      debugPrint('🔒 AudioMode: Wakelock enabled - screen will stay on');
+    } catch (e) {
+      debugPrint('❌ AudioMode: Failed to enable wakelock: $e');
+    }
+  }
+
+  /// スリープ防止を無効にする
+  Future<void> _disableWakelock() async {
+    try {
+      await WakelockPlus.disable();
+      debugPrint('🔓 AudioMode: Wakelock disabled');
+    } catch (e) {
+      debugPrint('❌ AudioMode: Failed to disable wakelock: $e');
+    }
+  }
+
   void _startImageStream() {
     _cameraController!.startImageStream((CameraImage image) {
+      // カメラ映像表示用のフレームスキップ制御
+      _displayFrameSkipCounter++;
+      bool shouldUpdateDisplay = (_displayFrameSkipCounter >= _frameSkipInterval);
+      if (shouldUpdateDisplay) {
+        _displayFrameSkipCounter = 0;
+        _currentDisplayFrame = image;
+      }
+      
+      // 顔検出用のフレームスキップ制御
+      _frameSkipCounter++;
+      if (_frameSkipCounter < _frameSkipInterval) {
+        // 表示更新のみ行う場合
+        if (shouldUpdateDisplay && mounted) {
+          setState(() {
+            // カメラ映像のみ更新
+          });
+        }
+        return;
+      }
+      _frameSkipCounter = 0;
+      
+      // 動的フレームレート調整（処理軽量化）
+      final now = DateTime.now();
+      final frameInterval = now.difference(_lastFrameTime).inMilliseconds;
+      _lastFrameTime = now;
+      
+      // フレーム間隔が短い（高負荷）場合はスキップ間隔を増やす（軽量化）
+      if (frameInterval < 50 && _frameSkipInterval < _maxFrameSkipInterval) {
+        _frameSkipInterval++;
+      } else if (frameInterval > 80 && _frameSkipInterval > _minFrameSkipInterval) {
+        _frameSkipInterval--;
+      }
+      
       if (!_isDetecting) {
         _isDetecting = true;
         _detectFaces(image).then((_) {
@@ -841,10 +1054,10 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
         return;
       }
 
-      debugPrint('Processing image with FaceDetector...');
-      debugPrint('InputImage metadata: ${inputImage.metadata}');
+      debugPrint('AudioMode: Processing image with FaceDetector...'); // デバッグ用に一時的に有効化
+      debugPrint('AudioMode: InputImage metadata: ${inputImage.metadata}');
       final faces = await _faceDetector!.processImage(inputImage);
-      debugPrint('Detected ${faces.length} faces');
+      debugPrint('AudioMode: Detected ${faces.length} faces'); // デバッグ用に一時的に有効化
       
       if (mounted) {
         setState(() {
@@ -1120,9 +1333,14 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
     if (_audioPlayer != null) {
       try {
         // カスタム音声ファイルが設定されている場合
-        if (_audioFile == 'custom' && _customAudioPath.isNotEmpty) {
-          await _audioPlayer!.play(DeviceFileSource(_customAudioPath));
-          return;
+        if (_audioFile == 'custom' && _customAudioPath != null) {
+          if (await File(_customAudioPath!).exists()) {
+            await _audioPlayer!.play(DeviceFileSource(_customAudioPath!));
+            return;
+          } else {
+            debugPrint('🎵 Custom audio file not found: $_customAudioPath');
+            // ファイルが見つからない場合はデフォルトの音声を再生
+          }
         }
         
         // 設定された音声ファイルに基づいて再生
@@ -1217,7 +1435,7 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
     try {
       final camera = _cameraController!.description;
       final sensorOrientation = camera.sensorOrientation;
-      debugPrint('Camera sensor orientation: $sensorOrientation');
+      // debugPrint('Camera sensor orientation: $sensorOrientation'); // 処理軽量化のためコメントアウト
       
       InputImageRotation? rotation;
       
@@ -1226,8 +1444,8 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
       } else if (Platform.isAndroid) {
         var rotationCompensation = 
             _orientations[_cameraController!.value.deviceOrientation];
-        debugPrint('Device orientation: ${_cameraController!.value.deviceOrientation}');
-        debugPrint('Rotation compensation: $rotationCompensation');
+        // debugPrint('Device orientation: ${_cameraController!.value.deviceOrientation}'); // 処理軽量化のためコメントアウト
+        // debugPrint('Rotation compensation: $rotationCompensation');
         
         if (rotationCompensation == null) {
           debugPrint('Rotation compensation is null');
@@ -1253,8 +1471,8 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
         return null;
       }
 
-      debugPrint('Image planes: ${image.planes.length}');
-      debugPrint('Image format: ${image.format.group}');
+      // debugPrint('Image planes: ${image.planes.length}'); // 処理軽量化のためコメントアウト
+      // debugPrint('Image format: ${image.format.group}');
       
       // YUV420形式（3プレーン）の場合の処理
       if (image.planes.length == 3) {
@@ -1278,7 +1496,7 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
           nv21Bytes[uvIndex++] = uPlane.bytes[i];
         }
         
-        debugPrint('Converted to NV21 format, bytes: ${nv21Bytes.length}');
+        // debugPrint('Converted to NV21 format, bytes: ${nv21Bytes.length}'); // 処理軽量化のためコメントアウト
         
         return InputImage.fromBytes(
           bytes: nv21Bytes,
@@ -1293,7 +1511,7 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
       // 1プレーンの場合の処理（従来通り）
       else if (image.planes.length == 1) {
         final plane = image.planes.first;
-        debugPrint('Image size: ${image.width}x${image.height}, bytes: ${plane.bytes.length}');
+        // debugPrint('Image size: ${image.width}x${image.height}, bytes: ${plane.bytes.length}'); // 処理軽量化のためコメントアウト
 
         return InputImage.fromBytes(
           bytes: plane.bytes,
@@ -1386,12 +1604,14 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
       _headMovementThreshold,
       _notEatingDuration,
       _alertOnNoFaceDetected,
+      _frameSkipInterval,
       (value) => _movementThreshold = value,
       (value) => _jawThreshold = value,
       (value) => _openThreshold = value,
       (value) => _headMovementThreshold = value,
       (value) => _notEatingDuration = value,
       (value) => _alertOnNoFaceDetected = value,
+      (value) => _frameSkipInterval = value,
     );
   }
 
@@ -1594,8 +1814,8 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
         setState(() => _isCastPlaying = isPlaying);
       };
       
-      _castController!.onMediaInfoChanged = (title, artist, position, duration) {
-        debugPrint('📺 Cast media info changed: $title');
+      _castController!.onMediaInfoChanged = (title, artist, position, duration, appName, packageName) {
+        debugPrint('📺 Cast media info changed: $title from $appName');
         setState(() => _currentCastTitle = title);
       };
       
@@ -1816,6 +2036,9 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
             
             // 制御パネル（カメラ映像の下に配置）
             _buildControlPanel(),
+            
+            // バナー広告
+            BannerAdWidget(),
         ],
         ),
       ),
@@ -1875,39 +2098,74 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
             ),
           ),
           
-          // 判定時間プルダウン
+          // 判定時間設定（視覚的なデザイン）
           Container(
             width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 上部のテキスト
+                const Text(
+                  '食べなくなってから',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    fontFamily: 'Noto Sans JP',
+                    color: Color(0xFF333333),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // 数値ボックスと秒後に再生のRow
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // 数値のDropdownボックス
+                    GestureDetector(
+                      onTap: () => _showDurationSelectionDialog(),
+                      child: Container(
+                        width: 80,
+                        height: 60,
             decoration: BoxDecoration(
               color: Colors.white,
-              border: Border.all(color: const Color(0xFF828282), width: 0.5),
-              borderRadius: BorderRadius.circular(5),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: DropdownButton<int>(
-              value: _notEatingDuration,
-              isExpanded: true,
-              underline: Container(),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFFFF9500), width: 2),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Center(
+                          child: Text(
+                            '$_notEatingDuration',
               style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w400,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFFFF9500),
                 fontFamily: 'Noto Sans JP',
-                color: Color(0xFF828282),
-              ),
-              items: List.generate(60, (index) => index + 1)
-                  .map((value) => DropdownMenuItem(
-                        value: value,
-                        child: Text('食べなくなってから${value}秒後に再生'),
-                      ))
-                  .toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() {
-                    _notEatingDuration = value;
-                  });
-                  _saveSettings();
-                }
-              },
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // 右側のテキスト
+                    const Text(
+                      '秒後に再生',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        fontFamily: 'Noto Sans JP',
+                        color: Color(0xFF333333),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
         ],
@@ -1921,62 +2179,171 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
       builder: (BuildContext context) {
         return AlertDialog(
           title: const Text('音声ファイルを選択'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.notifications, color: Color(0xFF2196F3)),
-                title: const Text('bell.mp3'),
-                subtitle: const Text('デフォルト'),
-                trailing: _audioFile == 'bell' ? const Icon(Icons.check, color: Colors.green) : null,
-                onTap: () {
-                  setState(() {
-                    _audioFile = 'bell';
-                  });
-                  _saveSettings();
-                  Navigator.of(context).pop();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.alarm, color: Color(0xFFFF9800)),
-                title: const Text('alarm.mp3'),
-                subtitle: const Text('アラーム音'),
-                trailing: _audioFile == 'alarm' ? const Icon(Icons.check, color: Colors.green) : null,
-                onTap: () {
-                  setState(() {
-                    _audioFile = 'alarm';
-                  });
-                  _saveSettings();
-                  Navigator.of(context).pop();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.music_note, color: Color(0xFF4CAF50)),
-                title: const Text('notification.mp3'),
-                subtitle: const Text('通知音'),
-                trailing: _audioFile == 'notification' ? const Icon(Icons.check, color: Colors.green) : null,
-                onTap: () {
-                  setState(() {
-                    _audioFile = 'notification';
-                  });
-                  _saveSettings();
-                  Navigator.of(context).pop();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.voice_chat, color: Color(0xFF9C27B0)),
-                title: const Text('voice.mp3'),
-                subtitle: const Text('音声メッセージ'),
-                trailing: _audioFile == 'voice' ? const Icon(Icons.check, color: Colors.green) : null,
-                onTap: () {
-                  setState(() {
-                    _audioFile = 'voice';
-                  });
-                  _saveSettings();
-                  Navigator.of(context).pop();
-                },
-              ),
-            ],
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.notifications, color: Color(0xFF2196F3)),
+                  title: const Text('bell.mp3'),
+                  subtitle: const Text('デフォルト'),
+                  trailing: _audioFile == 'bell' ? const Icon(Icons.check, color: Colors.green) : null,
+                  onTap: () {
+                    setState(() {
+                      _audioFile = 'bell';
+                    });
+                    _saveSettings();
+                    Navigator.of(context).pop();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.alarm, color: Color(0xFFFF9800)),
+                  title: const Text('alarm.mp3'),
+                  subtitle: const Text('アラーム音'),
+                  trailing: _audioFile == 'alarm' ? const Icon(Icons.check, color: Colors.green) : null,
+                  onTap: () {
+                    setState(() {
+                      _audioFile = 'alarm';
+                    });
+                    _saveSettings();
+                    Navigator.of(context).pop();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.music_note, color: Color(0xFF4CAF50)),
+                  title: const Text('notification.mp3'),
+                  subtitle: const Text('通知音'),
+                  trailing: _audioFile == 'notification' ? const Icon(Icons.check, color: Colors.green) : null,
+                  onTap: () {
+                    setState(() {
+                      _audioFile = 'notification';
+                    });
+                    _saveSettings();
+                    Navigator.of(context).pop();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.voice_chat, color: Color(0xFF9C27B0)),
+                  title: const Text('voice.mp3'),
+                  subtitle: const Text('音声メッセージ'),
+                  trailing: _audioFile == 'voice' ? const Icon(Icons.check, color: Colors.green) : null,
+                  onTap: () {
+                    setState(() {
+                      _audioFile = 'voice';
+                    });
+                    _saveSettings();
+                    Navigator.of(context).pop();
+                  },
+                ),
+                const Divider(),
+                ListTile(
+                  title: Text(
+                    'カスタム音声',
+                    style: TextStyle(
+                      color: _customAudioPath != null ? Colors.black : Colors.grey,
+                    ),
+                  ),
+                  subtitle: _customAudioPath != null 
+                    ? Text(
+                        _customAudioPath!.split('/').last,
+                        style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      )
+                    : const Text(
+                        '音声ファイルが設定されていません',
+                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                  leading: Radio<String>(
+                    value: 'custom',
+                    groupValue: _audioFile,
+                    onChanged: _customAudioPath != null ? (String? value) {
+                      setState(() {
+                        _audioFile = value!;
+                      });
+                      _saveSettings();
+                      Navigator.of(context).pop();
+                    } : null,
+                  ),
+                ),
+                ListTile(
+                  title: const Text('カスタム音声設定'),
+                  leading: const Icon(Icons.settings, color: Colors.blue),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    _selectCustomAudioFile();
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('キャンセル'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _selectCustomAudioFile() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.audio,
+        allowMultiple: false,
+      );
+
+      if (result != null && result.files.single.path != null) {
+        String filePath = result.files.single.path!;
+        setState(() {
+          _customAudioPath = filePath;
+        });
+        await _saveSettings();
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('カスタム音声を設定しました: ${result.files.single.name}'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('ファイル選択エラー: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('音声ファイルの選択に失敗しました'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _showDurationSelectionDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('再生までの時間を選択'),
+          content: Container(
+            width: double.maxFinite,
+            height: 300,
+            child: ListView.builder(
+              itemCount: 60,
+              itemBuilder: (context, index) {
+                final value = index + 1;
+                return ListTile(
+                  title: Text('$value秒'),
+                  trailing: _notEatingDuration == value ? const Icon(Icons.check, color: Colors.green) : null,
+                  onTap: () {
+                    setState(() {
+                      _notEatingDuration = value;
+                    });
+                    _saveSettings();
+                    Navigator.of(context).pop();
+                  },
+                );
+              },
+            ),
           ),
           actions: [
             TextButton(
@@ -1992,6 +2359,10 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
   @override
   void dispose() {
     debugPrint('🎵 AudioModeScreen disposing - Warning action: $_warningAction');
+    
+    // スリープ防止を無効にする
+    _disableWakelock();
+    
     _cameraController?.dispose();
     _faceDetector?.close();
     _audioPlayer?.dispose();
@@ -2180,9 +2551,21 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
   Timer? _uiUpdateTimer;
   Timer? _groupAudioTimer;
   
+  // パフォーマンス最適化用（VideoMode）
+  int _frameSkipCounter = 0;
+  int _frameSkipInterval = 5; // 設定から読み込まれる（デフォルト5）
+  DateTime _lastFrameTime = DateTime.now();
+  static const int _minFrameSkipInterval = 1; // 最小間隔（設定可能範囲の下限）
+  static const int _maxFrameSkipInterval = 20; // 最大間隔（設定可能範囲の上限）
+  
+  // カメラ映像表示用
+  int _displayFrameSkipCounter = 0;
+  CameraImage? _currentDisplayFrame;
+  
   bool _isCastConnected = false;
   bool _isCastPlaying = false;
   String _currentCastTitle = '';
+  String _currentVideoApp = 'YouTube'; // 現在接続中の動画アプリ名
   
   // 設定値
   double _movementThreshold = 0.012;
@@ -2215,6 +2598,10 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
     _warningAction = 'youtube_cast';
     _enableYouTubeCast = true;
     debugPrint('🎬 VideoModeScreen initialized - Warning action: $_warningAction, YouTube enabled: $_enableYouTubeCast');
+    
+    // スリープ防止を有効にする
+    _enableWakelock();
+    
     _initializeApp();
     
     _uiUpdateTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -2236,6 +2623,14 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
       setState(() {
         _isInitialized = true;
       });
+      
+      // 初期化完了後、YouTubeが選択されている場合はキャスト状態をチェック
+      if (_currentVideoApp == 'YouTube') {
+        // 少し遅延を入れてからチェック（UI表示後）
+        Future.delayed(const Duration(milliseconds: 500), () {
+          _checkYouTubeCastStatus();
+        });
+      }
     } catch (e) {
       setState(() {
         _initializationError = e.toString();
@@ -2271,7 +2666,7 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
       _warningAction = 'youtube_cast';
       _enableYouTubeCast = true;
       _alertOnNoFaceDetected = prefs.getBool('alert_on_no_face_detected') ?? false;
-      
+      _frameSkipInterval = prefs.getInt('frame_skip_interval') ?? 5;
     });
     debugPrint('🎬 VideoModeScreen settings loaded - Warning action: $_warningAction, YouTube enabled: $_enableYouTubeCast');
   }
@@ -2288,7 +2683,7 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
     await prefs.setBool('use_back_camera', _useBackCamera);
     // warning_actionとenable_youtube_castは画面固有なので保存しない
     await prefs.setBool('alert_on_no_face_detected', _alertOnNoFaceDetected);
-    
+    await prefs.setInt('frame_skip_interval', _frameSkipInterval);
   }
 
   Future<void> _initializeCamera() async {
@@ -2307,7 +2702,7 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
       
       _cameraController = CameraController(
         camera,
-        ResolutionPreset.high,
+        ResolutionPreset.high,  // 顔検出精度向上のためhighに戻す
         enableAudio: false,
       );
       
@@ -2326,12 +2721,12 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
       debugPrint('VideoMode: Initializing FaceDetector...');
       _faceDetector = FaceDetector(
         options: FaceDetectorOptions(
-          enableContours: true,
-          enableLandmarks: true,
+          enableContours: false,  // 処理軽量化のため無効化
+          enableLandmarks: true,   // 唇検出に必要
           enableClassification: false,
           enableTracking: false,
-          minFaceSize: 0.05,
-          performanceMode: FaceDetectorMode.accurate,
+          minFaceSize: 0.05,       // 顔検出精度向上のため小さい顔も検出
+          performanceMode: FaceDetectorMode.accurate,  // 顔検出精度向上のためaccurateに戻す
         ),
       );
       debugPrint('VideoMode: Face detector created successfully');
@@ -2349,6 +2744,26 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
     }
   }
 
+  /// スリープ防止を有効にする
+  Future<void> _enableWakelock() async {
+    try {
+      await WakelockPlus.enable();
+      debugPrint('🔒 VideoMode: Wakelock enabled - screen will stay on');
+    } catch (e) {
+      debugPrint('❌ VideoMode: Failed to enable wakelock: $e');
+    }
+  }
+
+  /// スリープ防止を無効にする
+  Future<void> _disableWakelock() async {
+    try {
+      await WakelockPlus.disable();
+      debugPrint('🔓 VideoMode: Wakelock disabled');
+    } catch (e) {
+      debugPrint('❌ VideoMode: Failed to disable wakelock: $e');
+    }
+  }
+
   Future<void> _initializeCastController() async {
     try {
       _castController = CastController();
@@ -2361,8 +2776,11 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
         setState(() => _isCastPlaying = isPlaying);
       };
       
-      _castController!.onMediaInfoChanged = (title, artist, position, duration) {
-        setState(() => _currentCastTitle = title);
+      _castController!.onMediaInfoChanged = (title, artist, position, duration, appName, packageName) {
+        setState(() {
+          _currentCastTitle = title;
+          _currentVideoApp = appName;
+        });
       };
       
       await _castController!.initialize();
@@ -2373,6 +2791,39 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
 
   void _startImageStream() {
     _cameraController!.startImageStream((CameraImage image) {
+      // カメラ映像表示用のフレームスキップ制御
+      _displayFrameSkipCounter++;
+      bool shouldUpdateDisplay = (_displayFrameSkipCounter >= _frameSkipInterval);
+      if (shouldUpdateDisplay) {
+        _displayFrameSkipCounter = 0;
+        _currentDisplayFrame = image;
+      }
+      
+      // 顔検出用のフレームスキップ制御
+      _frameSkipCounter++;
+      if (_frameSkipCounter < _frameSkipInterval) {
+        // 表示更新のみ行う場合
+        if (shouldUpdateDisplay && mounted) {
+          setState(() {
+            // カメラ映像のみ更新
+          });
+        }
+        return;
+      }
+      _frameSkipCounter = 0;
+      
+      // 動的フレームレート調整（処理軽量化）
+      final now = DateTime.now();
+      final frameInterval = now.difference(_lastFrameTime).inMilliseconds;
+      _lastFrameTime = now;
+      
+      // フレーム間隔が短い（高負荷）場合はスキップ間隔を増やす（軽量化）
+      if (frameInterval < 50 && _frameSkipInterval < _maxFrameSkipInterval) {
+        _frameSkipInterval++;
+      } else if (frameInterval > 80 && _frameSkipInterval > _minFrameSkipInterval) {
+        _frameSkipInterval--;
+      }
+      
       if (!_isDetecting) {
         _isDetecting = true;
         _detectFaces(image).then((_) {
@@ -2395,9 +2846,9 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
         return;
       }
 
-      debugPrint('VideoMode: Processing image with FaceDetector...');
+      // debugPrint('VideoMode: Processing image with FaceDetector...'); // 処理軽量化のためコメントアウト
       final faces = await _faceDetector!.processImage(inputImage);
-      debugPrint('VideoMode: Detected ${faces.length} faces');
+      // debugPrint('VideoMode: Detected ${faces.length} faces'); // 処理軽量化のためコメントアウト
       
       if (mounted) {
         setState(() {
@@ -2980,43 +3431,236 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
             ),
           ),
           
-          // 判定時間プルダウン
+          // 動画アプリ接続状態表示
           Container(
             width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _isCastConnected ? const Color(0xFFE8F5E8) : const Color(0xFFFFF3E0),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: _isCastConnected ? Colors.green.withOpacity(0.3) : Colors.orange.withOpacity(0.3),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  _isCastConnected ? Icons.check_circle : Icons.info_outline,
+                  color: _isCastConnected ? Colors.green : Colors.orange,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _isCastConnected ? '接続済み: $_currentVideoApp' : '待機中: $_currentVideoApp',
+                        style: TextStyle(
+                fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: _isCastConnected ? Colors.green.shade700 : Colors.orange.shade700,
+                        ),
+                      ),
+                      if (_isCastConnected && _currentCastTitle.isNotEmpty)
+                        Text(
+                          _currentCastTitle,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  _isCastPlaying ? Icons.play_arrow : Icons.pause,
+                  color: _isCastConnected ? Colors.green : Colors.grey,
+                  size: 16,
+                ),
+              ],
+            ),
+          ),
+          
+          // 判定時間設定（視覚的なデザイン）
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 上部のテキスト
+                const Text(
+                  '食べなくなってから',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                fontFamily: 'Noto Sans JP',
+                    color: Color(0xFF333333),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // 数値ボックスと秒後に停止のRow
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // 数値のDropdownボックス
+                    GestureDetector(
+                      onTap: () => _showDurationSelectionDialog(),
+                      child: Container(
+                        width: 80,
+                        height: 60,
             decoration: BoxDecoration(
               color: Colors.white,
-              border: Border.all(color: const Color(0xFF828282), width: 0.5),
-              borderRadius: BorderRadius.circular(5),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: DropdownButton<int>(
-              value: _notEatingDuration,
-              isExpanded: true,
-              underline: Container(),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFFFF9500), width: 2),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Center(
+                          child: Text(
+                            '$_notEatingDuration',
               style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w400,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFFFF9500),
                 fontFamily: 'Noto Sans JP',
-                color: Color(0xFF828282),
-              ),
-              items: List.generate(60, (index) => index + 1)
-                  .map((value) => DropdownMenuItem(
-                        value: value,
-                        child: Text('食べなくなってから${value}秒後に停止'),
-                      ))
-                  .toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() {
-                    _notEatingDuration = value;
-                  });
-                  _saveSettings();
-                }
-              },
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // 右側のテキスト
+                    const Text(
+                      '秒後に停止',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        fontFamily: 'Noto Sans JP',
+                        color: Color(0xFF333333),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
         ],
       ),
+    );
+  }
+
+  /// YouTubeキャスト状態をチェックし、キャストしていない場合はダイアログを表示
+  Future<void> _checkYouTubeCastStatus() async {
+    if (_castController != null) {
+      try {
+        final isConnected = await _castController!.isConnected();
+        debugPrint('🎬 YouTube cast status check - Connected: $isConnected');
+        
+        if (!isConnected) {
+          // キャストしていない場合、説明ダイアログを表示
+          _showCastInstructionDialog();
+        }
+      } catch (e) {
+        debugPrint('❌ Failed to check cast status: $e');
+        // エラーの場合も説明ダイアログを表示
+        _showCastInstructionDialog();
+      }
+    } else {
+      debugPrint('⚠️ Cast controller is null - showing instruction dialog');
+      _showCastInstructionDialog();
+    }
+  }
+
+  /// キャストしていない場合の説明ダイアログを表示
+  void _showCastInstructionDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.cast, color: Colors.orange, size: 28),
+              const SizedBox(width: 8),
+              const Flexible(
+                child: Text(
+                  'キャスト接続が必要です',
+                  style: TextStyle(fontSize: 18),
+                ),
+              ),
+            ],
+          ),
+          content: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.8,
+              maxHeight: MediaQuery.of(context).size.height * 0.7,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '現在YouTubeで動画をキャストしていません。\n動画停止モードを使用するには、以下の手順でキャストを開始してください：',
+                    style: TextStyle(fontSize: 16),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    '📱 キャスト手順：',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('1. YouTubeアプリを開く'),
+                  const Text('2. 視聴したい動画を選択'),
+                  const Text('3. 動画画面の右上にあるキャストボタン（📺）をタップ'),
+                  const Text('4. キャスト先デバイス（TV、Chromecastなど）を選択'),
+                  const Text('5. 動画がキャスト開始されたら、このアプリに戻る'),
+                  const SizedBox(height: 16),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.blue.shade200),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.info, color: Colors.blue, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'キャスト中の動画のみ、食事の検知に応じて自動で停止・再生されます。',
+                            style: TextStyle(fontSize: 14, color: Colors.blue),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('理解しました'),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -3032,14 +3676,81 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
               ListTile(
                 leading: const Icon(Icons.play_circle_fill, color: Colors.red),
                 title: const Text('YouTube'),
-                subtitle: const Text('デフォルト'),
-                trailing: const Icon(Icons.check, color: Colors.green),
+                subtitle: const Text('Google'),
+                trailing: _currentVideoApp == 'YouTube' ? const Icon(Icons.check, color: Colors.green) : null,
+                onTap: () async {
+                  setState(() {
+                    _currentVideoApp = 'YouTube';
+                  });
+                  Navigator.of(context).pop();
+                  
+                  // YouTubeを選択した場合、キャスト状態をチェック
+                  await _checkYouTubeCastStatus();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.tv, color: Colors.blue),
+                title: const Text('Amazon Prime Video'),
+                subtitle: const Text('Amazon'),
+                trailing: _currentVideoApp == 'Amazon Prime Video' ? const Icon(Icons.check, color: Colors.green) : null,
                 onTap: () {
-                  // YouTubeは現在唯一の選択肢
+                  setState(() {
+                    _currentVideoApp = 'Amazon Prime Video';
+                  });
+                  Navigator.of(context).pop();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.movie, color: Colors.orange),
+                title: const Text('dアニメストア'),
+                subtitle: const Text('NTTドコモ'),
+                trailing: _currentVideoApp == 'dアニメストア' ? const Icon(Icons.check, color: Colors.green) : null,
+                onTap: () {
+                  setState(() {
+                    _currentVideoApp = 'dアニメストア';
+                  });
                   Navigator.of(context).pop();
                 },
               ),
             ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('キャンセル'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showDurationSelectionDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('停止までの時間を選択'),
+          content: Container(
+            width: double.maxFinite,
+            height: 300,
+            child: ListView.builder(
+              itemCount: 60,
+              itemBuilder: (context, index) {
+                final value = index + 1;
+                return ListTile(
+                  title: Text('$value秒'),
+                  trailing: _notEatingDuration == value ? const Icon(Icons.check, color: Colors.green) : null,
+                  onTap: () {
+                    setState(() {
+                      _notEatingDuration = value;
+                    });
+                    _saveSettings();
+                    Navigator.of(context).pop();
+                  },
+                );
+              },
+            ),
           ),
           actions: [
             TextButton(
@@ -3172,6 +3883,9 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
                ),
              ),
             _buildControlPanel(),
+            
+            // バナー広告
+            BannerAdWidget(),
           ],
         ),
       ),
@@ -3187,18 +3901,24 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
       _headMovementThreshold,
       _notEatingDuration,
       _alertOnNoFaceDetected,
+      _frameSkipInterval,
       (value) => _movementThreshold = value,
       (value) => _jawThreshold = value,
       (value) => _openThreshold = value,
       (value) => _headMovementThreshold = value,
       (value) => _notEatingDuration = value,
       (value) => _alertOnNoFaceDetected = value,
+      (value) => _frameSkipInterval = value,
     );
   }
 
   @override
   void dispose() {
     debugPrint('🎬 VideoModeScreen disposing - Warning action: $_warningAction');
+    
+    // スリープ防止を無効にする
+    _disableWakelock();
+    
     _cameraController?.dispose();
     _faceDetector?.close();
     _audioPlayer?.dispose();

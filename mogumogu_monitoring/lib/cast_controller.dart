@@ -8,7 +8,7 @@ class CastController {
   // コールバック関数
   Function(bool)? onConnectionChanged;
   Function(bool)? onPlaybackStateChanged;
-  Function(String, String, double, double)? onMediaInfoChanged;
+  Function(String, String, double, double, String, String)? onMediaInfoChanged; // title, artist, position, duration, appName, packageName
   
   Timer? _statusTimer;
   bool _isInitialized = false;
@@ -158,8 +158,10 @@ class CastController {
           final position = (mediaInfo['position'] ?? 0).toDouble();
           final duration = (mediaInfo['duration'] ?? 0).toDouble();
           final isPlaying = mediaInfo['isPlaying'] ?? false;
+          final appName = mediaInfo['appName'] ?? 'Video App';
+          final packageName = mediaInfo['packageName'] ?? '';
           
-          onMediaInfoChanged?.call(title, artist, position, duration);
+          onMediaInfoChanged?.call(title, artist, position, duration, appName, packageName);
           onPlaybackStateChanged?.call(isPlaying);
         }
       }

@@ -1,4 +1,4 @@
-package com.example.mogumogu_monitoring
+package com.tama.mogumoguwatch
 
 import android.app.ActivityManager
 import android.content.Context
