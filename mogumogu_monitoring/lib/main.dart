@@ -726,11 +726,14 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
   CameraController? _cameraController;
   FaceDetector? _faceDetector;
   AudioPlayer? _audioPlayer;
+  AudioPlayer? _previewAudioPlayer; // 試聴用のAudioPlayer
   CastController? _castController; // YouTube Cast制御
   
   bool _isDetecting = false;
   bool _isInitialized = false;
   String _initializationError = '';
+  String? _currentlyPreviewing; // 現在試聴中の音声ファイル
+  bool _isDialogOpen = false; // ダイアログが開いているかどうか
   
   List<Face> _faces = [];
   Map<String, FaceState> _faceStates = {};
@@ -969,6 +972,7 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
   Future<void> _initializeAudioPlayer() async {
     try {
       _audioPlayer = AudioPlayer();
+      _previewAudioPlayer = AudioPlayer();
       debugPrint('Audio player created successfully');
     } catch (e) {
       debugPrint('Audio player initialization error: $e');
@@ -999,6 +1003,11 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
 
   void _startImageStream() {
     _cameraController!.startImageStream((CameraImage image) {
+      // ダイアログが開いている場合は処理をスキップ
+      if (_isDialogOpen) {
+        return;
+      }
+      
       // カメラ映像表示用のフレームスキップ制御
       _displayFrameSkipCounter++;
       bool shouldUpdateDisplay = (_displayFrameSkipCounter >= _frameSkipInterval);
@@ -1347,19 +1356,20 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
         String audioPath;
         switch (_audioFile) {
           case 'bell':
-            audioPath = 'sounds/bell.mp3';
+            // audioPath = 'sounds/bell.mp3';
+            audioPath = 'sounds/mixkit-notification-bell-592.wav';
             break;
           case 'alarm':
-            audioPath = 'sounds/alarm.mp3';
+            // audioPath = 'sounds/alarm.mp3';
+            audioPath = 'sounds/mixkit-uplifting-bells-notification-938.wav';
             break;
           case 'notification':
-            audioPath = 'sounds/notification.mp3';
-            break;
-          case 'voice':
-            audioPath = 'sounds/voice.mp3';
+            // audioPath = 'sounds/notification.mp3';
+            audioPath = 'sounds/mixkit-positive-notification-951.wav';
             break;
           default:
-            audioPath = 'sounds/bell.mp3';
+            // audioPath = 'sounds/bell.mp3';
+            audioPath = 'sounds/mixkit-notification-bell-592.wav';
         }
         
         debugPrint('🎵 Playing audio file: $audioPath (from _audioFile: $_audioFile)');
@@ -2174,6 +2184,10 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
   }
 
   void _showAudioSelectionDialog() {
+    setState(() {
+      _isDialogOpen = true; // ダイアログ開始
+    });
+    
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -2184,13 +2198,34 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 ListTile(
-                  leading: const Icon(Icons.notifications, color: Color(0xFF2196F3)),
-                  title: const Text('bell.mp3'),
-                  subtitle: const Text('デフォルト'),
-                  trailing: _audioFile == 'bell' ? const Icon(Icons.check, color: Colors.green) : null,
+                  leading: const Icon(Icons.notifications, color: Color(0xFF2196F3)),                  
+                  title: const Text('ベル音'),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          _currentlyPreviewing == 'bell' ? Icons.stop : Icons.play_arrow,
+                          color: _currentlyPreviewing == 'bell' ? Colors.red : Colors.blue,
+                        ),
+                        onPressed: () {
+                          if (_currentlyPreviewing == 'bell') {
+                            _stopPreview();
+                          } else {
+                            _previewAudio('bell');
+                          }
+                        },
+                        tooltip: _currentlyPreviewing == 'bell' ? '停止' : '試聴',
+                      ),
+                      if (_audioFile == 'bell') 
+                        const Icon(Icons.check, color: Colors.green),
+                    ],
+                  ),
                   onTap: () {
+                    _stopPreview(); // 試聴を停止
                     setState(() {
                       _audioFile = 'bell';
+                      _isDialogOpen = false; // ダイアログ終了
                     });
                     _saveSettings();
                     Navigator.of(context).pop();
@@ -2198,12 +2233,33 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
                 ),
                 ListTile(
                   leading: const Icon(Icons.alarm, color: Color(0xFFFF9800)),
-                  title: const Text('alarm.mp3'),
-                  subtitle: const Text('アラーム音'),
-                  trailing: _audioFile == 'alarm' ? const Icon(Icons.check, color: Colors.green) : null,
+                  title: const Text('アラーム音'),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          _currentlyPreviewing == 'alarm' ? Icons.stop : Icons.play_arrow,
+                          color: _currentlyPreviewing == 'alarm' ? Colors.red : Colors.blue,
+                        ),
+                        onPressed: () {
+                          if (_currentlyPreviewing == 'alarm') {
+                            _stopPreview();
+                          } else {
+                            _previewAudio('alarm');
+                          }
+                        },
+                        tooltip: _currentlyPreviewing == 'alarm' ? '停止' : '試聴',
+                      ),
+                      if (_audioFile == 'alarm') 
+                        const Icon(Icons.check, color: Colors.green),
+                    ],
+                  ),
                   onTap: () {
+                    _stopPreview(); // 試聴を停止
                     setState(() {
                       _audioFile = 'alarm';
+                      _isDialogOpen = false; // ダイアログ終了
                     });
                     _saveSettings();
                     Navigator.of(context).pop();
@@ -2211,25 +2267,33 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
                 ),
                 ListTile(
                   leading: const Icon(Icons.music_note, color: Color(0xFF4CAF50)),
-                  title: const Text('notification.mp3'),
-                  subtitle: const Text('通知音'),
-                  trailing: _audioFile == 'notification' ? const Icon(Icons.check, color: Colors.green) : null,
+                  title: const Text('通知音'),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          _currentlyPreviewing == 'notification' ? Icons.stop : Icons.play_arrow,
+                          color: _currentlyPreviewing == 'notification' ? Colors.red : Colors.blue,
+                        ),
+                        onPressed: () {
+                          if (_currentlyPreviewing == 'notification') {
+                            _stopPreview();
+                          } else {
+                            _previewAudio('notification');
+                          }
+                        },
+                        tooltip: _currentlyPreviewing == 'notification' ? '停止' : '試聴',
+                      ),
+                      if (_audioFile == 'notification') 
+                        const Icon(Icons.check, color: Colors.green),
+                    ],
+                  ),
                   onTap: () {
+                    _stopPreview(); // 試聴を停止
                     setState(() {
                       _audioFile = 'notification';
-                    });
-                    _saveSettings();
-                    Navigator.of(context).pop();
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.voice_chat, color: Color(0xFF9C27B0)),
-                  title: const Text('voice.mp3'),
-                  subtitle: const Text('音声メッセージ'),
-                  trailing: _audioFile == 'voice' ? const Icon(Icons.check, color: Colors.green) : null,
-                  onTap: () {
-                    setState(() {
-                      _audioFile = 'voice';
+                      _isDialogOpen = false; // ダイアログ終了
                     });
                     _saveSettings();
                     Navigator.of(context).pop();
@@ -2237,6 +2301,17 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
                 ),
                 const Divider(),
                 ListTile(
+                  leading: Radio<String>(
+                    value: 'custom',
+                    groupValue: _audioFile,
+                    onChanged: _customAudioPath != null ? (String? value) {
+                      setState(() {
+                        _audioFile = value!;
+                      });
+                      _saveSettings();
+                      Navigator.of(context).pop();
+                    } : null,
+                  ),
                   title: Text(
                     'カスタム音声',
                     style: TextStyle(
@@ -2252,22 +2327,46 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
                         '音声ファイルが設定されていません',
                         style: TextStyle(fontSize: 12, color: Colors.grey),
                       ),
-                  leading: Radio<String>(
-                    value: 'custom',
-                    groupValue: _audioFile,
-                    onChanged: _customAudioPath != null ? (String? value) {
-                      setState(() {
-                        _audioFile = value!;
-                      });
-                      _saveSettings();
-                      Navigator.of(context).pop();
-                    } : null,
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_customAudioPath != null)
+                        IconButton(
+                          icon: Icon(
+                            _currentlyPreviewing == 'custom' ? Icons.stop : Icons.play_arrow,
+                            color: _currentlyPreviewing == 'custom' ? Colors.red : Colors.blue,
+                          ),
+                          onPressed: () {
+                            if (_currentlyPreviewing == 'custom') {
+                              _stopPreview();
+                            } else {
+                              _previewAudio('custom', _customAudioPath);
+                            }
+                          },
+                          tooltip: _currentlyPreviewing == 'custom' ? '停止' : '試聴',
+                        ),
+                      if (_audioFile == 'custom') 
+                        const Icon(Icons.check, color: Colors.green),
+                    ],
                   ),
+                  onTap: _customAudioPath != null ? () {
+                    _stopPreview(); // 試聴を停止
+                    setState(() {
+                      _audioFile = 'custom';
+                      _isDialogOpen = false; // ダイアログ終了
+                    });
+                    _saveSettings();
+                    Navigator.of(context).pop();
+                  } : null,
                 ),
                 ListTile(
                   title: const Text('カスタム音声設定'),
                   leading: const Icon(Icons.settings, color: Colors.blue),
                   onTap: () {
+                    _stopPreview(); // 試聴を停止
+                    setState(() {
+                      _isDialogOpen = false; // ダイアログ終了
+                    });
                     Navigator.of(context).pop();
                     _selectCustomAudioFile();
                   },
@@ -2277,13 +2376,89 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () {
+                _stopPreview(); // 試聴を停止
+                setState(() {
+                  _isDialogOpen = false; // ダイアログ終了
+                });
+                Navigator.of(context).pop();
+              },
               child: const Text('キャンセル'),
             ),
           ],
         );
       },
-    );
+    ).then((_) {
+      // ダイアログが閉じられた時の処理
+      setState(() {
+        _isDialogOpen = false;
+      });
+    });
+  }
+
+  Future<void> _previewAudio(String audioType, [String? customPath]) async {
+    try {
+      // 現在再生中の試聴を停止
+      await _previewAudioPlayer?.stop();
+      
+      String audioPath;
+      if (audioType == 'custom' && customPath != null) {
+        if (await File(customPath).exists()) {
+          await _previewAudioPlayer?.play(DeviceFileSource(customPath));
+          setState(() {
+            _currentlyPreviewing = audioType;
+          });
+          return;
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('カスタム音声ファイルが見つかりません'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+      } else {
+        // デフォルト音声ファイル
+        switch (audioType) {
+          case 'bell':
+            audioPath = 'sounds/mixkit-notification-bell-592.wav';
+            break;
+          case 'alarm':
+            audioPath = 'sounds/mixkit-uplifting-bells-notification-938.wav';
+            break;
+          case 'notification':
+            audioPath = 'sounds/mixkit-positive-notification-951.wav';
+            break;
+          default:
+            audioPath = 'sounds/mixkit-notification-bell-592.wav';
+        }
+        
+        await _previewAudioPlayer?.play(AssetSource(audioPath));
+        setState(() {
+          _currentlyPreviewing = audioType;
+        });
+      }
+    } catch (e) {
+      debugPrint('試聴エラー: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('音声の試聴に失敗しました'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _stopPreview() async {
+    try {
+      await _previewAudioPlayer?.stop();
+      setState(() {
+        _currentlyPreviewing = null;
+      });
+    } catch (e) {
+      debugPrint('試聴停止エラー: $e');
+    }
   }
 
   Future<void> _selectCustomAudioFile() async {
@@ -2366,6 +2541,7 @@ class _AudioModeScreenState extends State<AudioModeScreen> {
     _cameraController?.dispose();
     _faceDetector?.close();
     _audioPlayer?.dispose();
+    _previewAudioPlayer?.dispose();
     _castController?.dispose(); // Cast制御の破棄
     _uiUpdateTimer?.cancel();
     _groupAudioTimer?.cancel(); // グループ音声タイマーもキャンセル
@@ -2545,6 +2721,7 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
   bool _isDetecting = false;
   bool _isInitialized = false;
   String _initializationError = '';
+  bool _isDialogOpen = false; // ダイアログが開いているかどうか
   
   List<Face> _faces = [];
   Map<String, FaceState> _faceStates = {};
@@ -2791,6 +2968,11 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
 
   void _startImageStream() {
     _cameraController!.startImageStream((CameraImage image) {
+      // ダイアログが開いている場合は処理をスキップ
+      if (_isDialogOpen) {
+        return;
+      }
+      
       // カメラ映像表示用のフレームスキップ制御
       _displayFrameSkipCounter++;
       bool shouldUpdateDisplay = (_displayFrameSkipCounter >= _frameSkipInterval);
@@ -3665,6 +3847,10 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
   }
 
   void _showVideoAppSelectionDialog() {
+    setState(() {
+      _isDialogOpen = true; // ダイアログ開始
+    });
+    
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -3681,6 +3867,7 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
                 onTap: () async {
                   setState(() {
                     _currentVideoApp = 'YouTube';
+                    _isDialogOpen = false; // ダイアログ終了
                   });
                   Navigator.of(context).pop();
                   
@@ -3688,41 +3875,53 @@ class _VideoModeScreenState extends State<VideoModeScreen> {
                   await _checkYouTubeCastStatus();
                 },
               ),
-              ListTile(
-                leading: const Icon(Icons.tv, color: Colors.blue),
-                title: const Text('Amazon Prime Video'),
-                subtitle: const Text('Amazon'),
-                trailing: _currentVideoApp == 'Amazon Prime Video' ? const Icon(Icons.check, color: Colors.green) : null,
-                onTap: () {
-                  setState(() {
-                    _currentVideoApp = 'Amazon Prime Video';
-                  });
-                  Navigator.of(context).pop();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.movie, color: Colors.orange),
-                title: const Text('dアニメストア'),
-                subtitle: const Text('NTTドコモ'),
-                trailing: _currentVideoApp == 'dアニメストア' ? const Icon(Icons.check, color: Colors.green) : null,
-                onTap: () {
-                  setState(() {
-                    _currentVideoApp = 'dアニメストア';
-                  });
-                  Navigator.of(context).pop();
-                },
-              ),
+              // ListTile(
+              //   leading: const Icon(Icons.tv, color: Colors.blue),
+              //   title: const Text('Amazon Prime Video'),
+              //   subtitle: const Text('Amazon'),
+              //   trailing: _currentVideoApp == 'Amazon Prime Video' ? const Icon(Icons.check, color: Colors.green) : null,
+              //   onTap: () {
+              //     setState(() {
+              //       _currentVideoApp = 'Amazon Prime Video';
+              //       _isDialogOpen = false; // ダイアログ終了
+              //     });
+              //     Navigator.of(context).pop();
+              //   },
+              // ),
+              // ListTile(
+              //   leading: const Icon(Icons.movie, color: Colors.orange),
+              //   title: const Text('dアニメストア'),
+              //   subtitle: const Text('NTTドコモ'),
+              //   trailing: _currentVideoApp == 'dアニメストア' ? const Icon(Icons.check, color: Colors.green) : null,
+              //   onTap: () {
+              //     setState(() {
+              //       _currentVideoApp = 'dアニメストア';
+              //       _isDialogOpen = false; // ダイアログ終了
+              //     });
+              //     Navigator.of(context).pop();
+              //   },
+              // ),
             ],
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () {
+                setState(() {
+                  _isDialogOpen = false; // ダイアログ終了
+                });
+                Navigator.of(context).pop();
+              },
               child: const Text('キャンセル'),
             ),
           ],
         );
       },
-    );
+    ).then((_) {
+      // ダイアログが閉じられた時の処理
+      setState(() {
+        _isDialogOpen = false;
+      });
+    });
   }
 
   void _showDurationSelectionDialog() {
